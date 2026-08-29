@@ -270,7 +270,7 @@ static bool enqueue_cmd_pin_reply(RingBuffer &buffer, uint64_t bdaddr, uint8_t *
   return false;
 }
 
-static bool enqueue_cmd_accept_connection(RingBuffer &buffer, uint64_t bd_addr) {
+static bool enqueue_cmd_accept_connection(RingBuffer &buffer, uint64_t bd_addr, uint8_t role) {
   if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 7)) {
     uint8_t *buf = out.data();
 
@@ -278,7 +278,7 @@ static bool enqueue_cmd_accept_connection(RingBuffer &buffer, uint64_t bd_addr) 
     UINT16_TO_STREAM(buf, HCI_ACCEPT_CONNECTION);
     UINT8_TO_STREAM(buf, 6 + 1);
     U64_ADDR_TO_STREAM(buf, bd_addr);
-    UINT8_TO_STREAM(buf, 1);
+    UINT8_TO_STREAM(buf, role);
     return true;
   }
   return false;

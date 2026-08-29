@@ -1,6 +1,7 @@
 #include "wii.h"
 #include "log.h"
 #include "esphome/core/log.h"
+#include <Arduino.h>
 
 #include "bluetooth.h"
 
@@ -10,6 +11,10 @@
 #include "utils.h"
 
 static const char *TAG = "wii";
+
+static constexpr uint32_t kReconnectFirstDelayMs = 100;
+static constexpr uint32_t kReconnectRetryCooldownMs = 700;
+static constexpr uint8_t kReconnectMaxAttempts = 10;
 
 namespace esphome::wii_balance_board::detail {
 
@@ -209,10 +214,16 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
     ESP_LOGI(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
     if (result.classOfDevice == 0x042500) {
-      ESP_LOGI(TAG, "Accepting board connection from paired device");
-      return true;  // Accept incoming connections from balance board
+      if (!reconnecting) {
+        pendingReconnect = result.bdaddr;
+        reconnectT0 = millis();
+        reconnectAttempts = 0;
+      }
+      ESP_LOGI(TAG, "Board page from %s: rejecting, re-paging as master",
+               formatHex((uint8_t *) &result.bdaddr, 6));
+      return false;
     }
-    return false;  // Reject all other incoming connections
+    return false;
   });
 
   bt->onHCIEvent([this](Bluetooth *bt, const HCIEvent &event) {
@@ -231,28 +242,38 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       }
                     },
                       [this](const HCIConnectionFailed &result) {
-                        pendingReconnect.reset();
+                        if (result.accepted) {
+                          ESP_LOGD(TAG, "Rejected incoming page from %s completed",
+                                   formatHex((uint8_t *) &result.bdaddr, 6));
+                          return;
+                        }
+                        ESP_LOGE(TAG, "Connection to %s failed status=0x%02X",
+                                 formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
+                        if (!pendingReconnect || *pendingReconnect != result.bdaddr) {
+                          return;
+                        }
+                        if (reconnectAttempts >= kReconnectMaxAttempts - 1) {
+                          pendingReconnect.reset();
+                          reconnecting = false;
+                          reconnectAttempts = 0;
+                          ESP_LOGE(TAG, "Giving up re-paging %s",
+                                   formatHex((uint8_t *) &result.bdaddr, 6));
+                          return;
+                        }
+                        reconnectAttempts++;
                         reconnecting = false;
-                        ESP_LOGE(TAG, "Failed to connect Wiimote %s", formatHex((uint8_t *) &result.bdaddr, 6));
+                        reconnectT0 = millis();
                       },
-                        [this](const HCIConnectionEstablished &result) {
+[this](const HCIConnectionEstablished &result) {
                           ESP_LOGI(TAG, "Wiimote connection established, handle: %d", result.handle);
 
-                         pendingReconnect.reset();
-                         reconnecting = false;
-                         handleToBdaddr[result.handle] = result.bdaddr;
+                          pendingReconnect.reset();
+                          reconnecting = false;
+                          reconnectAttempts = 0;
+                          handleToBdaddr[result.handle] = result.bdaddr;
 
-                         // The board refuses host-initiated L2CAP when it is the connection master
-                         // (i.e. it paged us, as on reconnect); only self-initiate L2CAP when we
-                         // were the one who paged the board (master), matching pairing behavior.
-                         if (!result.accepted) {
-                           initiatorHandles.emplace(result.handle);
-                         }
-
-                         // Do not open L2CAP before auth/encryption: newer boards power off if the
-                         // data pipe (PSM 0x0013) is opened pre-auth. L2CAP is opened later, from
-                         // HCIEncryptionChange, once the link is authenticated and encrypted.
-                         bluetooth->auth(result.handle);
+                          initiatorHandles.emplace(result.handle);
+                          bluetooth->auth(result.handle);
                       },
                     [bt](const HCILinkKeyRequest &result) {
                       ESP_LOGI(TAG, "Negative link reply");
@@ -353,12 +374,15 @@ Wii::~Wii() {}
 void Wii::sync(bool enable) { bluetooth->scan(enable); }
 
 void Wii::step() {
-  if (pendingReconnect.has_value() && !reconnecting) {
-    reconnecting = true;
-    auto bdaddr = pendingReconnect.value();
-    pendingReconnect.reset();
-    ESP_LOGI(TAG, "Reconnecting to board %s", formatHex((uint8_t *) &bdaddr, 6));
-    bluetooth->connect(bdaddr);
+  if (pendingReconnect && !reconnecting) {
+    uint32_t threshold = reconnectAttempts > 0 ? kReconnectRetryCooldownMs : kReconnectFirstDelayMs;
+    if (millis() - reconnectT0 >= threshold) {
+      ESP_LOGI(TAG, "Re-paging board %s as master (round %u)",
+               formatHex((uint8_t *) &*pendingReconnect, 6), (unsigned) reconnectAttempts + 1);
+      bluetooth->connect(*pendingReconnect);
+      reconnecting = true;
+      reconnectT0 = millis();
+    }
   }
   bluetooth->process();
 }

@@ -15,7 +15,7 @@
 #include <nvs.h>
 
 static const char *NVS_NAMESPACE = "wii_bb";
-static const char *NVS_KEY_PREFIX = "lk_";
+static const char *NVS_KEY_PREFIX = "lk";
 
 // Keep BT controller memory allocated on arduino-esp32 >= 3.3.7,
 // which otherwise frees it at startup when no BT library is detected.
@@ -137,13 +137,14 @@ struct Bluetooth::Impl {
       return;
     }
     nvs_iterator_t it = nullptr;
-    esp_err_t res = nvs_entry_find(NULL, NVS_NAMESPACE, NVS_TYPE_BLOB, &it);
+    esp_err_t res = nvs_entry_find(NULL, NVS_NAMESPACE, NVS_TYPE_ANY, &it);
     size_t loaded = 0;
     while (res == ESP_OK) {
       nvs_entry_info_t info;
       nvs_entry_info(it, &info);
-      if (strncmp(info.key, NVS_KEY_PREFIX, 3) == 0) {
-        uint64_t bdaddr = strtoull(info.key + 3, nullptr, 16);
+      ESP_LOGD(TAG, "NVS entry ns=%s key=%s type=%d", info.namespace_name, info.key, (int) info.type);
+      if (strncmp(info.key, NVS_KEY_PREFIX, 2) == 0) {
+        uint64_t bdaddr = strtoull(info.key + 2, nullptr, 16);
         std::array<uint8_t, 16> key;
         size_t size = 16;
         if (nvs_get_blob(handle, info.key, key.data(), &size) == ESP_OK && size == 16) {
@@ -170,12 +171,20 @@ struct Bluetooth::Impl {
       return;
     }
     char nvs_key[24];
-    snprintf(nvs_key, sizeof(nvs_key), "lk_%012llX", bdaddr);
+    snprintf(nvs_key, sizeof(nvs_key), "lk%012llX", bdaddr);
     err = nvs_set_blob(handle, nvs_key, key.data(), 16);
     if (err != ESP_OK) {
       ESP_LOGE(TAG, "NVS set blob failed: %s", esp_err_to_name(err));
     }
-    nvs_commit(handle);
+    err = nvs_commit(handle);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "NVS commit failed: %s", esp_err_to_name(err));
+    }
+    std::array<uint8_t, 16> readback;
+    size_t size = 16;
+    err = nvs_get_blob(handle, nvs_key, readback.data(), &size);
+    ESP_LOGD(TAG, "NVS readback key=%s err=%s size=%u match=%d", nvs_key, esp_err_to_name(err), (unsigned) size,
+             (err == ESP_OK && size == 16 && memcmp(readback.data(), key.data(), 16) == 0));
     nvs_close(handle);
   }
 
@@ -359,8 +368,8 @@ struct Bluetooth::Impl {
     uint8_t link_type = data[9];
 
     if (connectionRequestListener(bluetooth, HCIConnectionRequest{.bdaddr = bdaddr, .classOfDevice = cod})) {
-      ESP_LOGI(TAG, "Accepting connection from %s role=0x01", formatHex((uint8_t *)&bdaddr, 6));
-      CHECK_RESULT(enqueue_cmd_accept_connection(txBuffer, bdaddr));
+      ESP_LOGI(TAG, "Accepting connection from %s role=0x01 (remain slave)", formatHex((uint8_t *)&bdaddr, 6));
+      CHECK_RESULT(enqueue_cmd_accept_connection(txBuffer, bdaddr, 0x01));
     } else {
       ESP_LOGI(TAG, "Rejecting connection from %s", formatHex((uint8_t *)&bdaddr, 6));
       CHECK_RESULT(enqueue_cmd_reject_connection(txBuffer, bdaddr, 0x0F));
@@ -449,6 +458,12 @@ struct Bluetooth::Impl {
       case 0x18:
         handleHCILinkKeyNotification(data, len);
         break;
+      case 0x12: {
+        uint64_t bdaddr = *(const uint64_t *) (data + 1) &0xFFFFFFFFFFFFull;
+        ESP_LOGI(TAG, "Role Changed status=0x%02X %s new_role=0x%02X", data[0],
+                 formatHex((uint8_t *) &bdaddr, 6), data[7]);
+        break;
+      }
       case 0x06: {
         uint8_t status = data[0];
         uint16_t handle = (uint16_t)(data[2] << 8 | data[1]);
