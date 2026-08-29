@@ -57,11 +57,15 @@ With a bound board, reconnect **without user action is not achievable** on this 
 - **Pairing / re-sync** (sync button held, ESP page-scan) — works, this is the recovery path.
 - **Within-session data flow** (ESP paged as master, then scheduled disconnect) — works.
 
+#### Recommended workflow (supported recovery path)
+
+Board needs a session again → user presses **SYNC** on the board → ESP (already paging/in pairing mode) connects as master → stored link key (once NVS fix with §6 is validated) → PIN-free auth in ~2 s. This is the intended UX as long as the board's firmware refuses every host-driven reconnect route (R2/R3/R5/R6).
+
 ## 6. Open item (not an attempt, separate bug) — link-key persistence
 
 `saveLinkKey_` (bluetooth.cpp) saves the pairing's link key to NVS namespace `wii_bb`; `loadLinkKeys_` reads it at boot. Observed: after every successful pairing, the **next boot logs `Loaded 0 link keys`**. This is a **real bug** and blocks PIN-free *re-sync* (cross-boot auth), but is unrelated to attempts #2-#6 failures.
 
-In-flight fix (as of 16:53 build, config_hash `0xfdf0bbe6`): key name shortened `"lk_%012llX"` (15 chars) → `"lk%012llX"` (14 chars); `nvs_commit` result checked; immediate `nvs_get_blob` read-back logged after save; loader iterates `NVS_TYPE_ANY` and logs every entry. Validation still pending: pair once → expect `NVS readback ... match=1` → reboot → expect `Loaded 1 link keys`. If read-back is `match=0`, the write (flash/partition) fails; if `match=1` but boot still loads 0, the read path fails.
+In-flight fix (as of 16:53 build, config_hash `0xfdf0bbe6`): key name shortened `"lk_%012llX"` (15 chars) → `"lk%012llX"` (14 chars); `nvs_commit` result checked; immediate `nvs_get_blob` read-back logged after save; loader iterates `NVS_TYPE_ANY` and logs every entry. Rationale for the rename: `NVS_KEY_NAME_MAX_SIZE` is 15 — the old key `"lk_%012llX"` was exactly 15 chars (the maximum), leaving no room for any namespace/key-length truncation behavior; shortening to 14 removes that class of failure (and kills the recursive "is NVS the real reconnect cause?" cycle — it is not, see #6 in §4). Validation still pending: pair once → expect `NVS readback ... match=1` → reboot → expect `Loaded 1 link keys`. If read-back is `match=0`, the write (flash/partition) fails; if `match=1` but boot still loads 0, the read path fails.
 
 ## Appendix — reference
 
@@ -69,3 +73,37 @@ In-flight fix (as of 16:53 build, config_hash `0xfdf0bbe6`): key name shortened 
 - Board page cadence when we *accept*: ~5.8 s between attempts; session held ~1.0–1.1 s then `0x13`. After *reject*: single page, then silent ≥ 19 s.
 - Key HCI codes seen: `0x04` page timeout, `0x08` connection timeout, `0x0B` command disallowed, `0x0F` connection rejected, `0x13` remote hangup, `0x35` LMP PDU not allowed, `0x0004` L2CAP connection refused.
 - Commands: `& .venv\Scripts\esphome.exe compile|upload|logs wii_balance_board_esp32.yaml --device COM14` (from `C:\Temp\wii_balance_board`).
+
+## Appendix — evidence index
+
+Provenance legend: **disk** = forward-ref'd file under this repo; **chat** = exists only in the session conversation history (capture, not on disk).
+
+| Claim | Capture | Provenance | What to look for |
+|-------|---------|------------|------------------|
+| Bound + idle board is not page-scanning (`0x08`) | 16:11 | *chat* | `Connection Complete status=0x08` (~20 s), zero Connection Request events |
+| As slave the board refuses host-opened L2CAP | 16:25:37 | *chat* | `L2CAP_CON_RSP result=0x0004`, then `0x13` |
+| As master the board never opens L2CAP (no crypto) | 15:18 | *chat* | session `0x13` hangup ~1.1 s, zero L2CAP frames |
+| As master the board never opens L2CAP (crypto) | 16:30:04 | *chat* | same, after successful auth+encrypt |
+| Board refuses master/slave role switch | 16:33:37 / 16:33:43 | *chat* | `Role Changed status=0x35`, `new_role=0x01`, twice ~5.8 s apart |
+| Reject+re-page fails; board silent after rejection | 17:00 | `LOGS_attempt_VI.txt` | round-1 `status=0x0B`, clean round-2 `status=0x00` → `failed status=0x04` after 5.12 s, then ≥ 19 s silence |
+| Page-hold rhythm while accepting | 16:33 (dual) | *chat* | ~5.8 s page gap, ~1.0–1.1 s hold, `0x13`, repeated |
+
+## Appendix — firmware build ↔ attempt mapping
+
+| Attempt(s) | Build | config_hash / source |
+|------------|-------|----------------------|
+| I–III (accept only, no role request) | accept-flow build | earlier session compiles |
+| IV (accept `role=0x00`, request master) | 16:31–16:32 build | instrumentation for Role Changed |
+| V (page bound idle board) | reject+repage precursor build | 16:11 |
+| VI + NVS instrumentation | 16:53 build (uploaded 16:54) | `config_hash=0xfdf0bbe6` |
+| This document | — | commit `ac3bb4d` |
+
+Useful every time the goal of reconnect is revisited: identify the exact build behind any *new* capture before comparing it with these results.
+
+## Appendix — HCI / decoding gotchas
+
+- **`accepted` flag**: defined as `!connectRequests.contains(bdaddr)`. Consequence: the **Connection Complete of a *rejected incoming page* is logged as `accepted=false`** if any outbound `Create_Connection` was queued in between (seen in VI: the `0x0F` completion logged as "Connection to ... failed"). Do not interpret that line as a failed outbound connection by itself.
+- **Timing**: a rejected page's Connection Complete arrives ~150 ms after its Connection Request and carries a real handle (e.g. `0x0081`). Firing `Create_Connection` in that window self-collides at the controller → `status=0x0B` (Command Disallowed). The minimum safe rearm delay is "after the rejection's Connection Complete," not "100 ms."
+- **Reject reason** was `0x0F` (Connection Rejected Due To Unacceptable BD_ADDR) — the HCI primitive `Reject_Connection_Request` is all-or-nothing; different reason codes do not change page-scan behavior (see §4 "Considered and deferred").
+- **Endianness**: BD_ADDR appears little-endian in HCI/ACL bytes on this stack — `4F CC CB C5 56 8C` (accepted byte-forward on wire). Logs print the human-oriented form.
+- **PIN pairing**: replied with PIN method 1 (ESP's own MAC reversed); `Link Key Notification` reported `keyType=0x00`. Neither the PIN method nor keyType varied across attempts.
