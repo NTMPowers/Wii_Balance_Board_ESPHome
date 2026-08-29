@@ -1,0 +1,12 @@
+INFO ESPHome 2026.8.1
+INFO Reading configuration wii_balance_board_esp32.yaml...
+Failed config
+
+external_components: [source wii_balance_board_esp32.yaml:37]
+  - source: 
+      type: local
+      path: .
+    components: 
+      
+      Could not find __init__.py file for component wii_balance_board. Please check the component is defined by this source (search path: C:\Temp\wii_balance_board\wii_balance_board\__init__.py).
+      - wii_balance_board

@@ -1,0 +1,30 @@
+INFO ESPHome 2026.8.1
+INFO Loaded validated config cache for wii_balance_board_esp32.yaml, skipping validation.
+esptool v5.3.1
+                                                                               
+ Usage:                            python -m esphome.esptool write-flash       
+ [OPTIONS] <address> <filename>...                                             
+                                                                               
+ Try 'python -m esphome.esptool write-flash -h' for help                       
++- Error ---------------------------------------------------------------------+
+| Invalid value for '<address> <filename>...': [Errno 2] No such file or      |
+| directory:                                                                  |
+| 'C:\\Temp\\wii_balance_board\\.esphome\\build\\wii-balance-board\\build\\fi |
+| rmware.factory.bin'                                                         |
++-----------------------------------------------------------------------------+
+                                                                               
+INFO Upload with baud rate 460800 failed. Trying again with baud rate 115200.
+esptool v5.3.1
+                                                                               
+ Usage:                            python -m esphome.esptool write-flash       
+ [OPTIONS] <address> <filename>...                                             
+                                                                               
+ Try 'python -m esphome.esptool write-flash -h' for help                       
++- Error ---------------------------------------------------------------------+
+| Invalid value for '<address> <filename>...': [Errno 2] No such file or      |
+| directory:                                                                  |
+| 'C:\\Temp\\wii_balance_board\\.esphome\\build\\wii-balance-board\\build\\fi |
+| rmware.factory.bin'                                                         |
++-----------------------------------------------------------------------------+
+                                                                               
+WARNING Failed to upload to ['COM14']
