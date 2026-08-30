@@ -265,10 +265,21 @@ struct Bluetooth::Impl {
       }
     } else if (data[1] == 0x24 && data[2] == 0x0C) {  // write_class_of_device
       if (data[3] == 0x00) {                          // OK
-        CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
+        // Enable role switch in the default link policy so the controller is
+        // allowed to become master when accepting incoming connections.
+        CHECK_RESULT(enqueue_cmd_write_default_link_policy(txBuffer, 0x0001));
       } else {
         ESP_LOGE(TAG, "write_class_of_device failed.");
       }
+    } else if (data[1] == 0x0F && data[2] == 0x08) {  // write_default_link_policy
+      if (data[3] == 0x00) {                          // OK
+        ESP_LOGI(TAG, "Role switch enabled in default link policy");
+      } else {
+        ESP_LOGW(TAG, "write_default_link_policy failed status=0x%02X", data[3]);
+      }
+      // Continue init regardless: page scan must come up even if the
+      // controller rejects the policy command.
+      CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     } else if (data[1] == 0x1A && data[2] == 0x0C) {  // write_scan_enable
       if (data[3] == 0x00) {                          // OK
         initialized = true;
@@ -368,8 +379,8 @@ struct Bluetooth::Impl {
     uint8_t link_type = data[9];
 
     if (connectionRequestListener(bluetooth, HCIConnectionRequest{.bdaddr = bdaddr, .classOfDevice = cod})) {
-      ESP_LOGI(TAG, "Accepting connection from %s role=0x01 (remain slave)", formatHex((uint8_t *)&bdaddr, 6));
-      CHECK_RESULT(enqueue_cmd_accept_connection(txBuffer, bdaddr, 0x01));
+      ESP_LOGI(TAG, "Accepting connection from %s role=0x00 (become master)", formatHex((uint8_t *)&bdaddr, 6));
+      CHECK_RESULT(enqueue_cmd_accept_connection(txBuffer, bdaddr, 0x00));
     } else {
       ESP_LOGI(TAG, "Rejecting connection from %s", formatHex((uint8_t *)&bdaddr, 6));
       CHECK_RESULT(enqueue_cmd_reject_connection(txBuffer, bdaddr, 0x0F));
@@ -462,6 +473,7 @@ struct Bluetooth::Impl {
         uint64_t bdaddr = *(const uint64_t *) (data + 1) &0xFFFFFFFFFFFFull;
         ESP_LOGI(TAG, "Role Changed status=0x%02X %s new_role=0x%02X", data[0],
                  formatHex((uint8_t *) &bdaddr, 6), data[7]);
+        hciListener(bluetooth, HCIRoleChanged{.bdaddr = bdaddr, .status = data[0], .newRole = data[7]});
         break;
       }
       case 0x06: {
@@ -542,6 +554,11 @@ struct Bluetooth::Impl {
   void sendHCISetEncryption(uint16_t handle) {
     ESP_LOGI(TAG, "Queuing Set_Connection_Encryption handle=%d enable=1", handle);
     CHECK_RESULT(enqueue_cmd_set_encryption(txBuffer, handle, 0x01));
+  }
+
+  void sendHCISwitchRole(uint64_t bdaddr) {
+    ESP_LOGI(TAG, "Queuing Switch_Role to master for %s", formatHex((uint8_t *)&bdaddr, 6));
+    CHECK_RESULT(enqueue_cmd_switch_role(txBuffer, bdaddr, 0x00));
   }
 
   // ACL
@@ -941,6 +958,8 @@ void Bluetooth::onACLEvent(const std::function<void(Bluetooth *, const ACLEvent 
 void Bluetooth::auth(uint16_t handle) { m_impl->sendHCIAuth(handle); }
 
 void Bluetooth::setEncryption(uint16_t handle) { m_impl->sendHCISetEncryption(handle); }
+
+void Bluetooth::switch_role(uint64_t bdaddr) { m_impl->sendHCISwitchRole(bdaddr); }
 
 void Bluetooth::negativeReply(uint64_t bdaddr) { m_impl->sendHCINegativeReply(bdaddr); }
 

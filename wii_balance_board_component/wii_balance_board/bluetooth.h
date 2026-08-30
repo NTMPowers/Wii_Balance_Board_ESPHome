@@ -68,6 +68,12 @@ struct HCIEncryptionChange {
   uint8_t status;
 };
 
+struct HCIRoleChanged {
+  uint64_t bdaddr;
+  uint8_t status;
+  uint8_t newRole;  // 0x00 = master, 0x01 = slave
+};
+
 struct ACLConnectionRequest {
   uint16_t handle;
   uint16_t sourceCid;
@@ -101,7 +107,7 @@ struct ACLData {
 
 using HCIEvent = std::variant<HCIInquiryStarted, HCIInquiryComplete, HCIInquiryResult, HCIConnectionEstablished,
                               HCIConnectionFailed, HCIDisconnected, HCIRemoteName, HCILinkKeyRequest, HCIPINRequest,
-                              HCIAuthComplete, HCIEncryptionChange>;
+                              HCIAuthComplete, HCIEncryptionChange, HCIRoleChanged>;
 using ACLEvent = std::variant<ACLDisconnected, ACLConnectionFailed, ACLConnectionEstablished, ACLData>;
 
 class Bluetooth {
@@ -128,6 +134,7 @@ class Bluetooth {
   void connect(uint64_t bdaddr);
   void auth(uint16_t handle);
   void setEncryption(uint16_t handle);
+  void switch_role(uint64_t bdaddr);
   void negativeReply(uint64_t bdaddr);
   void disconnect(uint16_t handle);
   void sendPinReply(uint64_t bdaddr, uint8_t *pinData, size_t len);

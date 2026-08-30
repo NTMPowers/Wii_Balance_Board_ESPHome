@@ -11,6 +11,7 @@ esp32:
       CONFIG_BT_ENABLED: y
       CONFIG_BLUEDROID_ENABLED: y
       CONFIG_CLASSIC_BT_ENABLED: y
+      CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY: y
 
 # Enable logging
 logger:

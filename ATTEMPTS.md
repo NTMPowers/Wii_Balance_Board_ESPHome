@@ -25,13 +25,14 @@ Legend: "board paged ESP" = board is baseband **master**; "ESP paged board" = ES
 | IV | Board paged ESP, **request master role** (D, 16:33:37 and 16:33:43) | accept with `role=0x00` (become master); auth; encrypt; ESP opens PSM `0x0011` | `Role Changed status=0x35` (`LMP PDU not allowed`), `new_role=0x01` (still slave); then PSM `0x0011` refused `0x0004`; disconnect `0x13` after ~1 s. Happened twice, ~5.8 s apart. | Board **refuses the master/slave role switch at LMP level** (0x35) and, still master, refuses host-opened L2CAP. |
 | V | ESP paged a **bound board in idle/standby** (16:11) | firmware was a reject+repage build; ESP queued `Create_Connection` to the already-paired board during its own sync scan | `Connection Complete status=0x08` (timeout) after ~20 s; **zero** Connection Request events arrived | A bound board in standby is **not page-scanning**. Page-scan only happens in sync/discoverable mode. NOTE: this was a page during idle, **not** a repage against a live board page — repage stayed untested until VI. |
 | VI | **Reject + re-page** (during board auto-reconnect window, 17:00) | reject board page (reason `0x0F`); 100 ms later ESP `Create_Connection`; retry every 700 ms, up to 10 rounds | R1: `Create_Connection status=0x0B` (**Command Disallowed** — our controller was still completing the rejected page; its Connection Complete `0x0F` arrived ~150 ms later). R2 (~1.3 s after page): create accepted (`0x00`) → full 5.12 s page window → **`status=0x04` Page Timeout, no response**. Board paged once more total, then **silent for 19+ s** (compare sustained ~5.8 s cadence when we *accepted* its pages in II–IV). | Three independent causes: (a) rejecting + immediately `Create_Connection` **self-collides in our own controller** (R1 `0x0B` — avoidable by waiting for the rejection's Connection Complete); (b) a board in its auto-reconnect window **does not page-scan** — a clean 5.12 s window got zero answer; (c) rejection makes the board **back off / stop paging**. Refutes the ESP32Wiimote "always page, never accept" reconnect model for this board. |
+| VII | Board paged ESP, **crypto + open PSM 0x0013 directly** (18:08:32) | accept as slave (`role=0x01`); auth (stored key found); encrypt OK; ESP opens PSM `0x0013` directly (skipping `0x0011`) | `L2CAP_CON_RSP result=0x0004` (connection refused); disconnect `0x13` after ~1 s | As baseband **slave** the board **refuses PSM 0x0013 directly** (`result=0x0004`) exactly as it refused PSM 0x0011 in Attempt II. Definitively proves the board rejects *all* host-initiated L2CAP channels regardless of PSM. |
 
 ## 3. Proven constraints (rules this board obeyed in every test)
 
 - R1. Baseband link succeeds only when: the board pages us, **or** the board is page-scanning (sync mode, ESP pages it).
-- R2. When the board is pager (baseband master): it never opens L2CAP to us, refuses our L2CAP requests (`0x0004`), and hangs up on its own after ~1.0–1.1 s (`0x13`).
-- R3. The board refuses to become baseband slave via role switch (`0x35`).
-  → **A board-initiated link can never yield a working L2CAP session on this stack (I + II + III + IV + VI).**
+- R2. When the board is pager (baseband master): it never opens L2CAP to us (I, III), refuses our L2CAP requests on both PSM 0x0011 and PSM 0x0013 (`0x0004`, II & VII), and hangs up on its own after ~1.0–1.1 s (`0x13`).
+- R3. The board refuses to become baseband slave via role switch (`0x35`, IV).
+  → **A board-initiated link can never yield a working L2CAP session on this stack (I + II + III + IV + VI + VII).**
 - R4. ESP-paged (master) link works **only** while the board is in sync/discoverable mode (R5, R6 bound the rest).
 - R5. Bound + idle board does not answer host pages (`0x08`, attempt V).
 - R6. Bound + board-in-auto-reconnect does not answer host pages (`0x04`, attempt VI R2).
@@ -40,11 +41,11 @@ Legend: "board paged ESP" = board is baseband **master**; "ESP paged board" = ES
 ## 4. Do-not-repeat list (avoid these as "new ideas")
 
 1. "Accept the page; the board will open L2CAP as master" → disproven (I, III).
-2. "Accept the page; open PSM `0x0011`/`0x0013` as slave" → disproven (II; `0x0004`, then `0x13`).
+2. "Accept the page; open PSM `0x0011`/`0x0013` as slave" → disproven (II: `0x0011` refused `0x0004`; VII: `0x0013` refused `0x0004`, then `0x13`).
 3. "Accept with `role=0x00` (request master)" → disproven (IV; `0x35` refusal).
 4. "Reject the page and immediately re-page to steal the link" → disproven (VI). Also note the controller self-collision (`0x0B`) if the create fires before the rejection's Connection Complete; that fix alone does **not** change the outcome (clean 5.12 s window, VI R2, was silent).
 5. "ESP pages the bound board to reconnect it without user action" → disproven (V `0x08`, VI R2 `0x04`).
-6. "Blame the stored/link key" for the L2CAP/role failures → **not a factor**: in-session reconnects used a RAM key; auth+encryption *succeeded*; failure was always at L2CAP/role level. (The key-persistence bug is real but separate — §6.)
+6. "Blame the stored/link key" for the L2CAP/role failures → **not a factor**: in-session reconnects used a RAM/stored key; auth+encryption *succeeded*; failure was always at L2CAP/role level. (The key-persistence bug is real but separate — §6.)
 
 ### Considered and deferred (do not run without new evidence)
 - **Explicit `HCI Switch_Role` after accepting as slave:** sends the same LMP role-change PDU the board already refused at accept-time (`0x35`, IV). Not run; expected to fail identically.
@@ -61,11 +62,14 @@ With a bound board, reconnect **without user action is not achievable** on this 
 
 Board needs a session again → user presses **SYNC** on the board → ESP (already paging/in pairing mode) connects as master → stored link key (once NVS fix with §6 is validated) → PIN-free auth in ~2 s. This is the intended UX as long as the board's firmware refuses every host-driven reconnect route (R2/R3/R5/R6).
 
-## 6. Open item (not an attempt, separate bug) — link-key persistence
+## 6. Open item — link-key persistence (VALIDATED)
 
-`saveLinkKey_` (bluetooth.cpp) saves the pairing's link key to NVS namespace `wii_bb`; `loadLinkKeys_` reads it at boot. Observed: after every successful pairing, the **next boot logs `Loaded 0 link keys`**. This is a **real bug** and blocks PIN-free *re-sync* (cross-boot auth), but is unrelated to attempts #2-#6 failures.
-
-In-flight fix (as of 16:53 build, config_hash `0xfdf0bbe6`): key name shortened `"lk_%012llX"` (15 chars) → `"lk%012llX"` (14 chars); `nvs_commit` result checked; immediate `nvs_get_blob` read-back logged after save; loader iterates `NVS_TYPE_ANY` and logs every entry. Rationale for the rename: `NVS_KEY_NAME_MAX_SIZE` is 15 — the old key `"lk_%012llX"` was exactly 15 chars (the maximum), leaving no room for any namespace/key-length truncation behavior; shortening to 14 removes that class of failure (and kills the recursive "is NVS the real reconnect cause?" cycle — it is not, see #6 in §4). Validation still pending: pair once → expect `NVS readback ... match=1` → reboot → expect `Loaded 1 link keys`. If read-back is `match=0`, the write (flash/partition) fails; if `match=1` but boot still loads 0, the read path fails.
+`saveLinkKey_` (bluetooth.cpp) saves the pairing's link key to NVS namespace `wii_bb`; `loadLinkKeys_` reads it at boot.
+- Key name shortened to `"lk%012llX"` (14 chars, under 15-char limit).
+- **Validation completed during Attempt VII (18:08:20):**
+  - First pair: `NVS readback key=lk8C56C5CBCC4F err=ESP_OK size=16 match=1`
+  - Disconnect / Reconnect attempt: `Link key found, replying for 4F CC CB C5 56 8C`
+  - PIN-free authentication succeeded without re-entering PIN.
 
 ## Appendix — reference
 
@@ -81,7 +85,8 @@ Provenance legend: **disk** = forward-ref'd file under this repo; **chat** = exi
 | Claim | Capture | Provenance | What to look for |
 |-------|---------|------------|------------------|
 | Bound + idle board is not page-scanning (`0x08`) | 16:11 | *chat* | `Connection Complete status=0x08` (~20 s), zero Connection Request events |
-| As slave the board refuses host-opened L2CAP | 16:25:37 | *chat* | `L2CAP_CON_RSP result=0x0004`, then `0x13` |
+| As slave the board refuses host-opened L2CAP (0x0011) | 16:25:37 | *chat* | `L2CAP_CON_RSP result=0x0004`, then `0x13` |
+| As slave the board refuses host-opened L2CAP (0x0013 direct) | 18:08:33 | `ATTEMPTS.md` / *chat* | `L2CAP_CON_RSP result=0x0004`, then `0x13` |
 | As master the board never opens L2CAP (no crypto) | 15:18 | *chat* | session `0x13` hangup ~1.1 s, zero L2CAP frames |
 | As master the board never opens L2CAP (crypto) | 16:30:04 | *chat* | same, after successful auth+encrypt |
 | Board refuses master/slave role switch | 16:33:37 / 16:33:43 | *chat* | `Role Changed status=0x35`, `new_role=0x01`, twice ~5.8 s apart |
@@ -96,7 +101,7 @@ Provenance legend: **disk** = forward-ref'd file under this repo; **chat** = exi
 | IV (accept `role=0x00`, request master) | 16:31–16:32 build | instrumentation for Role Changed |
 | V (page bound idle board) | reject+repage precursor build | 16:11 |
 | VI + NVS instrumentation | 16:53 build (uploaded 16:54) | `config_hash=0xfdf0bbe6` |
-| This document | — | commit `ac3bb4d` |
+| VII (accept slave + PSM 0x0013 direct) | 18:06 build | `config_hash=0xfdf0bbe6` |
 
 Useful every time the goal of reconnect is revisited: identify the exact build behind any *new* capture before comparing it with these results.
 
