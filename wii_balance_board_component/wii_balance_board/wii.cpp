@@ -212,9 +212,9 @@ class Wii::BalanceBoard {
 
 Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
-    ESP_LOGI(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
+    ESP_LOGD(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
     if (result.classOfDevice == 0x042500) {
-      ESP_LOGI(TAG, "Accepting board connection from paired device");
+      ESP_LOGD(TAG, "Accepting board connection from paired device");
       return true;
     }
     return false;
@@ -230,7 +230,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                      }
                    },
                      [bt](const HCIRemoteName &result) {
-                      ESP_LOGI(TAG, "Found %s %s", result.remoteName.data(), formatHex((uint8_t *) &result.inquiry.bdaddr, 6));
+                      ESP_LOGD(TAG, "Found %s %s", result.remoteName.data(), formatHex((uint8_t *) &result.inquiry.bdaddr, 6));
                       if (result.remoteName == "Nintendo RVL-WBC-01") {
                         bt->connect(result.inquiry);
                       }
@@ -242,7 +242,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                                  formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
                       },
                        [this](const HCIConnectionEstablished &result) {
-                           ESP_LOGI(TAG, "Wiimote connection established, handle: %d, accepted: %d", result.handle, result.accepted);
+                           ESP_LOGD(TAG, "Wiimote connection established, handle: %d, accepted: %d", result.handle, result.accepted);
 
                            pendingReconnect.reset();
                            reconnecting = false;
@@ -259,13 +259,13 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                              // board only proceeds with L2CAP once the host is
                              // master. Auth is deferred until the switch resolves.
                              initiatorHandles.erase(result.handle);
-                             ESP_LOGI(TAG, "Board-initiated connection, requesting role switch to master");
+                             ESP_LOGD(TAG, "Board-initiated connection, requesting role switch to master");
                              pendingRoleSwitch[result.handle] = result.bdaddr;
                              bluetooth->switch_role(result.bdaddr);
                            }
                        },
                     [bt](const HCILinkKeyRequest &result) {
-                      ESP_LOGI(TAG, "Negative link reply");
+                      ESP_LOGD(TAG, "Negative link reply");
                       bt->negativeReply(result.bdaddr);
                     },
                     [bt](const HCIPINRequest &result) {
@@ -274,11 +274,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       for (size_t i = 0; i < 6; ++i) {
                         pin_data[i] = mac[5 - i];
                       }
-                      ESP_LOGI(TAG, "Sending pin reply");
+                      ESP_LOGD(TAG, "Sending pin reply");
                       bt->sendPinReply(result.bdaddr, pin_data, 6);
                     },
                             [this](const HCIDisconnected &result) {
-                              ESP_LOGI(TAG, "Disconnected %d reason=0x%02X", result.handle, result.reason);
+                              ESP_LOGD(TAG, "Disconnected %d reason=0x%02X", result.handle, result.reason);
                               pendingPSM13.erase(result.handle);
                               pendingEncryption.erase(result.handle);
                               pendingRoleSwitch.erase(result.handle);
@@ -287,7 +287,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                             },
                             [this](const HCIAuthComplete &result) {
                              if (result.status == 0x00) {
-                               ESP_LOGI(TAG, "Auth complete for handle=0x%04X, enabling encryption", result.handle);
+                               ESP_LOGD(TAG, "Auth complete for handle=0x%04X, enabling encryption", result.handle);
                                pendingEncryption.emplace(result.handle);
                                bluetooth->setEncryption(result.handle);
                              } else {
@@ -298,13 +298,13 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                              [this](const HCIEncryptionChange &result) {
                               if (result.status == 0x00 && pendingEncryption.erase(result.handle) > 0) {
                                 if (initiatorHandles.erase(result.handle) > 0) {
-                                  ESP_LOGI(TAG, "Encryption enabled for handle=0x%04X (master/pairing), opening PSM 0x0011", result.handle);
+                                  ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X (master/pairing), opening PSM 0x0011", result.handle);
                                   pendingPSM13.emplace(result.handle);
                                   bluetooth->l2cap_connect(result.handle, 0x0011, 0x40);
                                 } else {
                                   // Board-initiated reconnect: the board opens
                                   // L2CAP PSMs itself once the host is master.
-                                  ESP_LOGI(TAG, "Encryption enabled for handle=0x%04X (slave/reconnect), waiting for board to open L2CAP", result.handle);
+                                  ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X (slave/reconnect), waiting for board to open L2CAP", result.handle);
                                 }
                               } else if (result.status != 0x00) {
                                 pendingEncryption.erase(result.handle);
@@ -323,7 +323,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                               uint16_t handle = it->first;
                               pendingRoleSwitch.erase(it);
                               if (result.status == 0x00 && result.newRole == 0x00) {
-                                ESP_LOGI(TAG, "Role switch to master succeeded for handle=0x%04X, proceeding with auth", handle);
+                                ESP_LOGD(TAG, "Role switch to master succeeded for handle=0x%04X, proceeding with auth", handle);
                               } else {
                                 ESP_LOGW(TAG, "Role switch failed (status=0x%02X new_role=0x%02X) for handle=0x%04X, proceeding as slave",
                                          result.status, result.newRole, handle);
@@ -335,7 +335,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   });
 
   bt->onACLConnectionRequest([](Bluetooth *, const ACLConnectionRequest &req) {
-    ESP_LOGI(TAG, "Received ACL connection request from %d, psm %02X", req.handle, req.psm);
+    ESP_LOGD(TAG, "Received ACL connection request from %d, psm %02X", req.handle, req.psm);
     return (req.psm == 0x0011 || req.psm == 0x0013);
   });
 
@@ -359,11 +359,12 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                        },
                       [this, bt](const ACLConnectionEstablished &conn) {
                         if (conn.psm == 0x0011 && pendingPSM13.erase(conn.handle) > 0) {
-                          ESP_LOGI(TAG, "PSM 0x0011 established for handle=%d, opening PSM 0x0013", conn.handle);
+                          ESP_LOGD(TAG, "PSM 0x0011 established for handle=%d, opening PSM 0x0013", conn.handle);
                           bt->l2cap_connect(conn.handle, 0x0013, 0x40);
                         } else if (conn.psm == 0x0013) {
                           pendingPSM13.erase(conn.handle);
-                          ESP_LOGI(TAG, "PSM 0x0013 established for handle=%d, board ready", conn.handle);
+                          ESP_LOGD(TAG, "PSM 0x0013 established for handle=%d", conn.handle);
+                          ESP_LOGI(TAG, "Balance board ready");
                           connectedBoards.emplace(conn.handle, std::make_unique<BalanceBoard>(bluetooth, conn.handle));
                           connectedBoards[conn.handle]->setLeds(bluetooth, conn.handle, std::bitset<4>(0b0001));
                           this->eventListener(BalanceBoardConnected{

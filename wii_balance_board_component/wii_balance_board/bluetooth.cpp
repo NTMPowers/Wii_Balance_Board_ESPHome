@@ -273,7 +273,7 @@ struct Bluetooth::Impl {
       }
     } else if (data[1] == 0x0F && data[2] == 0x08) {  // write_default_link_policy
       if (data[3] == 0x00) {                          // OK
-        ESP_LOGI(TAG, "Role switch enabled in default link policy");
+        ESP_LOGD(TAG, "Role switch enabled in default link policy");
       } else {
         ESP_LOGW(TAG, "write_default_link_policy failed status=0x%02X", data[3]);
       }
@@ -293,9 +293,9 @@ struct Bluetooth::Impl {
   void handleHCICommandStatusEvent(uint8_t *data, size_t len) {
     uint16_t opcode = (uint16_t)(data[3] << 8 | data[2]);
     if (opcode == (0x0005 | HCI_GRP_LINK_CONT_CMDS)) {  // create_connection
-      ESP_LOGI(TAG, "Create_Connection status=0x%02X", data[0]);
+      ESP_LOGD(TAG, "Create_Connection status=0x%02X", data[0]);
     } else if (opcode == (0x0011 | HCI_GRP_LINK_CONT_CMDS)) {  // authentication
-      ESP_LOGI(TAG, "Authentication_Requested status=0x%02X", data[0]);
+      ESP_LOGD(TAG, "Authentication_Requested status=0x%02X", data[0]);
     } else if (opcode == (0x0001 | HCI_GRP_LINK_CONT_CMDS)) {  // inquiry
       if (data[0] == 0x00) {
         hciListener(bluetooth, HCIInquiryStarted{});
@@ -379,10 +379,10 @@ struct Bluetooth::Impl {
     uint8_t link_type = data[9];
 
     if (connectionRequestListener(bluetooth, HCIConnectionRequest{.bdaddr = bdaddr, .classOfDevice = cod})) {
-      ESP_LOGI(TAG, "Accepting connection from %s role=0x00 (become master)", formatHex((uint8_t *)&bdaddr, 6));
+      ESP_LOGD(TAG, "Accepting connection from %s role=0x00 (become master)", formatHex((uint8_t *)&bdaddr, 6));
       CHECK_RESULT(enqueue_cmd_accept_connection(txBuffer, bdaddr, 0x00));
     } else {
-      ESP_LOGI(TAG, "Rejecting connection from %s", formatHex((uint8_t *)&bdaddr, 6));
+      ESP_LOGD(TAG, "Rejecting connection from %s", formatHex((uint8_t *)&bdaddr, 6));
       CHECK_RESULT(enqueue_cmd_reject_connection(txBuffer, bdaddr, 0x0F));
     }
   }
@@ -418,7 +418,7 @@ struct Bluetooth::Impl {
     uint64_t bdaddr = *(const uint64_t *)data & 0xFFFFFFFFFFFFull;
     std::array<uint8_t, 16> key;
     memcpy(key.data(), data + 6, 16);
-    ESP_LOGI(TAG, "Link key notification for BD_ADDR %s, keyType=0x%02X", formatHex((uint8_t *)&bdaddr, 6),
+    ESP_LOGD(TAG, "Link key notification for BD_ADDR %s, keyType=0x%02X", formatHex((uint8_t *)&bdaddr, 6),
              len >= 23 ? data[22] : 0xFF);
     saveLinkKey_(bdaddr, key);
   }
@@ -430,7 +430,7 @@ struct Bluetooth::Impl {
       auto n = snprintf(buf + pos, sizeof(buf) - pos, "%02X ", data[i]);
       if (n > 0) pos += n;
     }
-    ESP_LOGI(TAG, "%s [%d] %s", label, len, buf);
+    ESP_LOGV(TAG, "%s [%d] %s", label, len, buf);
   }
 
   void handleHCIEvent(uint8_t eventCode, uint8_t *data, size_t len) {
@@ -471,7 +471,7 @@ struct Bluetooth::Impl {
         break;
       case 0x12: {
         uint64_t bdaddr = *(const uint64_t *) (data + 1) &0xFFFFFFFFFFFFull;
-        ESP_LOGI(TAG, "Role Changed status=0x%02X %s new_role=0x%02X", data[0],
+        ESP_LOGD(TAG, "Role Changed status=0x%02X %s new_role=0x%02X", data[0],
                  formatHex((uint8_t *) &bdaddr, 6), data[7]);
         hciListener(bluetooth, HCIRoleChanged{.bdaddr = bdaddr, .status = data[0], .newRole = data[7]});
         break;
@@ -479,7 +479,7 @@ struct Bluetooth::Impl {
       case 0x06: {
         uint8_t status = data[0];
         uint16_t handle = (uint16_t)(data[2] << 8 | data[1]);
-        ESP_LOGI(TAG, "Authentication Complete handle=%d status=0x%02X", handle, status);
+        ESP_LOGD(TAG, "Authentication Complete handle=%d status=0x%02X", handle, status);
         hciListener(bluetooth, HCIAuthComplete{.handle = handle, .status = status});
         break;
       }
@@ -487,7 +487,7 @@ struct Bluetooth::Impl {
         uint8_t status = data[0];
         uint16_t handle = (uint16_t)(data[2] << 8 | data[1]);
         uint8_t enabled = data[3];
-        ESP_LOGI(TAG, "Encryption Change handle=%d status=0x%02X enabled=%d", handle, status, enabled);
+        ESP_LOGD(TAG, "Encryption Change handle=%d status=0x%02X enabled=%d", handle, status, enabled);
         hciListener(bluetooth, HCIEncryptionChange{.handle = handle, .status = status});
         break;
       }
@@ -497,7 +497,7 @@ struct Bluetooth::Impl {
   void sendHCIReset() { CHECK_RESULT(enqueue_cmd_reset(txBuffer)); }
 
   void sendHCIDisconnect(uint16_t handle) {
-    ESP_LOGI(TAG, "Queuing Disconnect handle=%d reason=0x13", handle);
+    ESP_LOGD(TAG, "Queuing Disconnect handle=%d reason=0x13", handle);
     CHECK_RESULT(enqueue_cmd_disconnect(txBuffer, handle));
   }
 
@@ -529,7 +529,7 @@ struct Bluetooth::Impl {
   }
 
   void sendHCIConnect(const HCIInquiryResult &result) {
-    ESP_LOGI(TAG, "Queuing Create_Connection to %s", formatHex((uint8_t *)&result.bdaddr, 6));
+    ESP_LOGD(TAG, "Queuing Create_Connection to %s", formatHex((uint8_t *)&result.bdaddr, 6));
     connectRequests.emplace(result.bdaddr);
     CHECK_RESULT(enqueue_cmd_create_connection(txBuffer, result.bdaddr, 0x0008, result.psrm, result.clkOffset, 0x01));
   }
@@ -547,17 +547,17 @@ struct Bluetooth::Impl {
   }
 
   void sendHCIAuth(uint16_t handle) {
-    ESP_LOGI(TAG, "Queuing Authentication_Requested handle=%d", handle);
+    ESP_LOGD(TAG, "Queuing Authentication_Requested handle=%d", handle);
     CHECK_RESULT(enqueue_cmd_auth_request(txBuffer, handle));
   }
 
   void sendHCISetEncryption(uint16_t handle) {
-    ESP_LOGI(TAG, "Queuing Set_Connection_Encryption handle=%d enable=1", handle);
+    ESP_LOGD(TAG, "Queuing Set_Connection_Encryption handle=%d enable=1", handle);
     CHECK_RESULT(enqueue_cmd_set_encryption(txBuffer, handle, 0x01));
   }
 
   void sendHCISwitchRole(uint64_t bdaddr) {
-    ESP_LOGI(TAG, "Queuing Switch_Role to master for %s", formatHex((uint8_t *)&bdaddr, 6));
+    ESP_LOGD(TAG, "Queuing Switch_Role to master for %s", formatHex((uint8_t *)&bdaddr, 6));
     CHECK_RESULT(enqueue_cmd_switch_role(txBuffer, bdaddr, 0x00));
   }
 
@@ -612,17 +612,17 @@ struct Bluetooth::Impl {
       CHECK_RESULT(enqueue_acl_l2cap_single_packet(txBuffer, handle, packetBoundaryFlag, broadcastFlag, channelId, data,
                                                    dataLen));
       connection->remoteConfigured = true;
-      ESP_LOGI(TAG, "L2CAP config request handle=%d dcid=0x%04X mtu=%d initiator=%d", handle, destinationCid, mtu,
+      ESP_LOGD(TAG, "L2CAP config request handle=%d dcid=0x%04X mtu=%d initiator=%d", handle, destinationCid, mtu,
                connection->initiator);
       if (connection->remoteConfigured && connection->localConfigured) {
-        ESP_LOGI(TAG, "L2CAP established handle=%d psm=0x%04X accepted=%d", handle, connection->psm,
+        ESP_LOGD(TAG, "L2CAP established handle=%d psm=0x%04X accepted=%d", handle, connection->psm,
                  !connection->initiator);
         aclListener(bluetooth, ACLConnectionEstablished{
-                                   .handle = handle,
-                                   .sourceCid = sourceCid,
-                                   .psm = connection->psm,
-                                   .accepted = !connection->initiator,
-                               });
+                                    .handle = handle,
+                                    .sourceCid = sourceCid,
+                                    .psm = connection->psm,
+                                    .accepted = !connection->initiator,
+                                });
       }
     }
   }
@@ -675,11 +675,11 @@ struct Bluetooth::Impl {
 
     if (result == 0x0000) {  // Connection established, initiate configuration
       connection->remoteCid = destinationCid;
-      ESP_LOGI(TAG, "L2CAP connect response OK handle=%d psm=0x%04X dcid=0x%04X, sending config", handle,
+      ESP_LOGD(TAG, "L2CAP connect response OK handle=%d psm=0x%04X dcid=0x%04X, sending config", handle,
                connection->psm, destinationCid);
       sendL2Configure(handle, destinationCid, connection->mtu);
     } else if (result >= 0x0002) {  // Connection failed
-      ESP_LOGI(TAG, "L2CAP connect response FAILED handle=%d psm=0x%04X result=0x%04X status=0x%04X", handle, connection->psm,
+      ESP_LOGD(TAG, "L2CAP connect response FAILED handle=%d psm=0x%04X result=0x%04X status=0x%04X", handle, connection->psm,
                result, status);
       aclListener(bluetooth, ACLConnectionFailed{
                                  .handle = handle,
@@ -700,7 +700,7 @@ struct Bluetooth::Impl {
 
     connection->localConfigured = true;
     if (connection->localConfigured && connection->remoteConfigured) {
-      ESP_LOGI(TAG, "L2CAP established handle=%d psm=0x%04X accepted=%d", handle, connection->psm,
+      ESP_LOGD(TAG, "L2CAP established handle=%d psm=0x%04X accepted=%d", handle, connection->psm,
                !connection->initiator);
       aclListener(bluetooth, ACLConnectionEstablished{
                                  .handle = handle,
@@ -727,7 +727,7 @@ struct Bluetooth::Impl {
     dumpHex("L2CAP_CON_REQ", data, ((data[3] << 8) | data[2]) + 4);
     uint16_t sourceCid = (data[7] << 8) | data[6];
     uint16_t psm = (data[5] << 8) | data[4];
-    ESP_LOGI(TAG, "L2CAP connection request handle=%d psm=0x%04X scid=0x%04X", handle, psm, sourceCid);
+    ESP_LOGD(TAG, "L2CAP connection request handle=%d psm=0x%04X scid=0x%04X", handle, psm, sourceCid);
     bool accepted = aclConnectionRequestListener(
         bluetooth, ACLConnectionRequest{.handle = handle, .sourceCid = sourceCid, .psm = psm});
     auto localCid = connections.nextCid(handle);
