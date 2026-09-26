@@ -60,11 +60,11 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
     sample.scale_factor = profile.scale_factor;
     ESP_LOGI(TAG, "Loaded board calibration offset=%.3f kg scale=%.6f", sample.zero_offset_kg,
              sample.scale_factor);
-    set_calibration_status_("Board calibrated; 1 kg minimum active");
+    set_calibration_status_("Board Calibrated; 1 Kilogram Minimum Active");
   } else {
     active_calibration_ = CalibrationProfile{CALIBRATION_MAGIC, 0.0f, 1.0f};
     ESP_LOGI(TAG, "No saved calibration for this board; 10 kg minimum active");
-    set_calibration_status_("Uncalibrated board; capture empty to calibrate");
+    set_calibration_status_("Uncalibrated Board; Capture Empty To Calibrate");
   }
   sampleMap.emplace(handle, sample);
 
@@ -102,7 +102,7 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
     if (calibration_stage_ != CalibrationStage::IDLE && calibration_handle_ == handle) {
       calibration_stage_ = CalibrationStage::IDLE;
       reset_calibration_samples_();
-      set_calibration_status_("Calibration interrupted: board disconnected");
+      set_calibration_status_("Calibration Interrupted: Board Disconnected");
     }
   }
   if (sampleMap.count(handle) > 0) {
@@ -176,12 +176,12 @@ void WiiBalanceBoard::reset_calibration_samples_() {
 
 void WiiBalanceBoard::capture_calibration_empty() {
   if (!active_board_) {
-    set_calibration_status_("Connect the board before calibration");
+    set_calibration_status_("Connect The Board Before Calibration");
     ESP_LOGW(TAG, "Cannot capture empty board: no board is connected");
     return;
   }
   if (calibration_stage_ == CalibrationStage::CAPTURE_LOAD) {
-    set_calibration_status_("Loaded capture is active; cancel before restarting");
+    set_calibration_status_("Loaded Capture Is Active; Cancel Before Restarting");
     return;
   }
   calibration_handle_ = active_handle_;
@@ -191,14 +191,14 @@ void WiiBalanceBoard::capture_calibration_empty() {
   if (!queue.reschedule(active_handle_, millis() + 15000)) {
     schedule_disconnect_(active_handle_, active_generation_, 15000);
   }
-  set_calibration_status_("Capturing empty board; do not touch it");
+  set_calibration_status_("Capturing Empty Board; Do Not Touch It");
   ESP_LOGI(TAG, "Calibration: capturing empty-board samples");
 }
 
 void WiiBalanceBoard::set_calibration_reference_weight(float weight_kg) {
   if (!std::isfinite(weight_kg) || weight_kg < 1.0f || weight_kg > 200.0f) {
     calibration_reference_weight_ = NAN;
-    set_calibration_status_("Reference weight must be between 1 and 200 kg");
+    set_calibration_status_("Reference Weight Must Be Between 1 And 200 Kilograms");
     return;
   }
   calibration_reference_weight_ = weight_kg;
@@ -208,12 +208,12 @@ void WiiBalanceBoard::set_calibration_reference_weight(float weight_kg) {
 void WiiBalanceBoard::capture_calibration_load() {
   if (!active_board_ || calibration_stage_ != CalibrationStage::WAIT_FOR_LOAD ||
       calibration_handle_ != active_handle_) {
-    set_calibration_status_("Capture an empty board before starting loaded capture");
+    set_calibration_status_("Capture An Empty Board Before Starting Loaded Capture");
     return;
   }
   if (!std::isfinite(calibration_reference_weight_) || calibration_reference_weight_ < 1.0f ||
       calibration_reference_weight_ > 200.0f) {
-    set_calibration_status_("Enter a reference weight between 1 and 200 kg first");
+    set_calibration_status_("Enter A Reference Weight Between 1 And 200 Kilograms First");
     return;
   }
   calibration_stage_ = CalibrationStage::CAPTURE_LOAD;
@@ -221,18 +221,18 @@ void WiiBalanceBoard::capture_calibration_load() {
   if (!queue.reschedule(active_handle_, millis() + 15000)) {
     schedule_disconnect_(active_handle_, active_generation_, 15000);
   }
-  set_calibration_status_("Stand on the board and hold still; capture is automatic");
+  set_calibration_status_("Stand On The Board And Hold Still; Capture Is Automatic");
   ESP_LOGI(TAG, "Calibration: capturing loaded samples for %.2f kg", calibration_reference_weight_);
 }
 
 void WiiBalanceBoard::cancel_calibration() {
   if (calibration_stage_ == CalibrationStage::IDLE) {
-    set_calibration_status_(active_board_ ? "Calibration cancelled" : "Connect the board before calibration");
+    set_calibration_status_(active_board_ ? "Calibration Cancelled" : "Connect The Board Before Calibration");
     return;
   }
   calibration_stage_ = CalibrationStage::IDLE;
   reset_calibration_samples_();
-  set_calibration_status_("Calibration cancelled; previous calibration retained");
+  set_calibration_status_("Calibration Cancelled; Previous Calibration Retained");
   ESP_LOGW(TAG, "Calibration cancelled");
   if (active_board_) {
     if (!queue.reschedule(active_handle_, millis() + 15000)) {
@@ -263,21 +263,23 @@ void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
     variance += difference * difference / (retained - 1);
   }
   const float deviation = std::sqrt(variance);
-  if (!std::isfinite(mean) || deviation >= std_dev_) {
+  const float max_deviation = calibration_stage_ == CalibrationStage::CAPTURE_LOAD ? std::max(std_dev_, 1.0f)
+                                                                                    : std_dev_;
+  if (!std::isfinite(mean) || deviation >= max_deviation) {
     ESP_LOGD(TAG, "Calibration window not stable yet: mean=%.3f kg deviation=%.3f kg", mean, deviation);
     return;
   }
 
   if (calibration_stage_ == CalibrationStage::CAPTURE_EMPTY) {
     if (mean < 0.0f || mean > 250.0f) {
-      set_calibration_status_("Empty capture outside valid range; retry capture");
+      set_calibration_status_("Empty Capture Outside Valid Range; Retry Capture");
       reset_calibration_samples_();
       return;
     }
     calibration_empty_weight_ = mean;
     calibration_stage_ = CalibrationStage::WAIT_FOR_LOAD;
     reset_calibration_samples_();
-    set_calibration_status_("Empty captured; enter known weight and start loaded capture");
+    set_calibration_status_("Empty Captured; Enter Known Weight And Start Loaded Capture");
     ESP_LOGI(TAG, "Calibration empty capture=%.3f kg", calibration_empty_weight_);
     return;
   }
@@ -286,11 +288,9 @@ void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
     return;
   }
   const float span = mean - calibration_empty_weight_;
-  if (span < 1.0f) {
-    calibration_stage_ = CalibrationStage::WAIT_FOR_LOAD;
-    reset_calibration_samples_();
-    set_calibration_status_("Loaded capture too small; step off and arm capture again");
-    ESP_LOGW(TAG, "Calibration load delta %.3f kg is too small", span);
+  const float minimum_load_delta = std::max(0.5f, std::min(1.0f, calibration_reference_weight_ * 0.25f));
+  if (span < minimum_load_delta) {
+    ESP_LOGD(TAG, "Waiting for loaded capture: delta=%.3f kg required=%.3f kg", span, minimum_load_delta);
     return;
   }
 
@@ -299,7 +299,7 @@ void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
       !save_calibration_(active_bdaddr_, profile)) {
     calibration_stage_ = CalibrationStage::WAIT_FOR_LOAD;
     reset_calibration_samples_();
-    set_calibration_status_("Calibration could not be saved; step off and retry");
+    set_calibration_status_("Calibration Could Not Be Saved; Step Off And Retry");
     return;
   }
 
@@ -318,7 +318,7 @@ void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
   }
   calibration_stage_ = CalibrationStage::IDLE;
   reset_calibration_samples_();
-  set_calibration_status_("Calibration saved for this board");
+  set_calibration_status_("Calibration Saved For This Board");
   ESP_LOGI(TAG, "Calibration saved: empty=%.3f kg known=%.2f kg scale=%.6f", profile.zero_offset_kg,
            calibration_reference_weight_, profile.scale_factor);
   if (!queue.reschedule(calibration_handle_, millis() + 15000)) {
@@ -413,7 +413,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 }
 
 void WiiBalanceBoard::setup() {
-  set_calibration_status_("Connect the board with A to check calibration");
+  set_calibration_status_("Connect The Board With A To Check Calibration");
   if (led_pin_ >= 0) {
     pinMode(led_pin_, OUTPUT);
     digitalWrite(led_pin_, HIGH);
