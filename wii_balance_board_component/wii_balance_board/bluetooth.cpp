@@ -15,7 +15,6 @@
 #include <nvs.h>
 
 static const char *NVS_NAMESPACE = "wii_bb";
-static const char *NVS_KEY_PREFIX = "lk";
 
 // Keep BT controller memory allocated on arduino-esp32 >= 3.3.7,
 // which otherwise frees it at startup when no BT library is detected.
@@ -132,40 +131,28 @@ struct Bluetooth::Impl {
 
   Impl(Bluetooth *bluetooth) : bluetooth(bluetooth), rxBuffer(1024), txBuffer(1024) {
     esp_read_mac(macAddress.data(), ESP_MAC_BT);
-    loadLinkKeys_();
   }
 
-  void loadLinkKeys_() {
+  bool loadLinkKey_(uint64_t bdaddr, std::array<uint8_t, 16> *key) {
+    char nvs_key[24];
+    snprintf(nvs_key, sizeof(nvs_key), "lk%012llX", static_cast<unsigned long long>(bdaddr));
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
-      ESP_LOGD(TAG, "NVS open for link keys failed: %s", esp_err_to_name(err));
-      return;
+      ESP_LOGD(TAG, "NVS open for link key failed: %s", esp_err_to_name(err));
+      return false;
     }
-    nvs_iterator_t it = nullptr;
-    esp_err_t res = nvs_entry_find(NULL, NVS_NAMESPACE, NVS_TYPE_ANY, &it);
-    size_t loaded = 0;
-    while (res == ESP_OK) {
-      nvs_entry_info_t info;
-      nvs_entry_info(it, &info);
-      ESP_LOGD(TAG, "NVS entry ns=%s key=%s type=%d", info.namespace_name, info.key, (int) info.type);
-      if (strncmp(info.key, NVS_KEY_PREFIX, 2) == 0) {
-        uint64_t bdaddr = strtoull(info.key + 2, nullptr, 16);
-        std::array<uint8_t, 16> key;
-        size_t size = 16;
-        if (nvs_get_blob(handle, info.key, key.data(), &size) == ESP_OK && size == 16) {
-          linkKeys_[bdaddr] = key;
-          loaded++;
-          ESP_LOGD(TAG, "Loaded link key for BD_ADDR %012llX", bdaddr);
-        } else {
-          ESP_LOGD(TAG, "Failed to read blob for key %s", info.key);
-        }
-      }
-      res = nvs_entry_next(&it);
-    }
-    nvs_release_iterator(it);
+    size_t size = key->size();
+    err = nvs_get_blob(handle, nvs_key, key->data(), &size);
     nvs_close(handle);
-    ESP_LOGD(TAG, "Loaded %u link keys from NVS", (unsigned)loaded);
+    if (err != ESP_OK || size != key->size()) {
+      ESP_LOGD(TAG, "No persisted link key for %012llX: %s", static_cast<unsigned long long>(bdaddr),
+               esp_err_to_name(err));
+      return false;
+    }
+    linkKeys_[bdaddr] = *key;
+    ESP_LOGD(TAG, "Loaded persisted link key for %012llX", static_cast<unsigned long long>(bdaddr));
+    return true;
   }
 
   void saveLinkKey_(uint64_t bdaddr, const std::array<uint8_t, 16> &key) {
@@ -276,38 +263,34 @@ struct Bluetooth::Impl {
         ESP_LOGE(TAG, "Reset failed");
       }
     } else if (data[1] == 0x09 && data[2] == 0x10) {  // read_bd_addr
-      if (data[3] == 0x00) {                          // OK
+      if (data[3] == 0x00) {
         char name[] = "ESP32-BT-WIIP";
         CHECK_RESULT(enqueue_cmd_write_local_name(txBuffer, (uint8_t *) name, sizeof(name)));
       } else {
         ESP_LOGE(TAG, "read_bd_addr failed.");
       }
     } else if (data[1] == 0x13 && data[2] == 0x0C) {  // write_local_name
-      if (data[3] == 0x00) {                          // OK
+      if (data[3] == 0x00) {
         uint8_t cod[3] = {0x04, 0x05, 0x00};
         CHECK_RESULT(enqueue_cmd_write_class_of_device(txBuffer, cod));
       } else {
         ESP_LOGE(TAG, "write_local_name failed.");
       }
     } else if (data[1] == 0x24 && data[2] == 0x0C) {  // write_class_of_device
-      if (data[3] == 0x00) {                          // OK
-        // Enable role switch in the default link policy so the controller is
-        // allowed to become master when accepting incoming connections.
+      if (data[3] == 0x00) {
         CHECK_RESULT(enqueue_cmd_write_default_link_policy(txBuffer, 0x0001));
       } else {
         ESP_LOGE(TAG, "write_class_of_device failed.");
       }
     } else if (data[1] == 0x0F && data[2] == 0x08) {  // write_default_link_policy
-      if (data[3] == 0x00) {                          // OK
+      if (data[3] == 0x00) {
         ESP_LOGD(TAG, "Role switch enabled in default link policy");
       } else {
         ESP_LOGW(TAG, "write_default_link_policy failed status=0x%02X", data[3]);
       }
-      // Continue init regardless: page scan must come up even if the
-      // controller rejects the policy command.
       CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     } else if (data[1] == 0x1A && data[2] == 0x0C) {  // write_scan_enable
-      if (data[3] == 0x00) {                          // OK
+      if (data[3] == 0x00) {
         bool was_initialized = initialized;
         initialized = true;
         if (!was_initialized) {
@@ -323,11 +306,11 @@ struct Bluetooth::Impl {
 
   void handleHCICommandStatusEvent(uint8_t *data, size_t len) {
     uint16_t opcode = (uint16_t)(data[3] << 8 | data[2]);
-    if (opcode == (0x0005 | HCI_GRP_LINK_CONT_CMDS)) {  // create_connection
+    if (opcode == (0x0005 | HCI_GRP_LINK_CONT_CMDS)) {
       ESP_LOGD(TAG, "Create_Connection status=0x%02X", data[0]);
-    } else if (opcode == (0x0011 | HCI_GRP_LINK_CONT_CMDS)) {  // authentication
+    } else if (opcode == (0x0011 | HCI_GRP_LINK_CONT_CMDS)) {
       ESP_LOGD(TAG, "Authentication_Requested status=0x%02X", data[0]);
-    } else if (opcode == (0x0001 | HCI_GRP_LINK_CONT_CMDS)) {  // inquiry
+    } else if (opcode == (0x0001 | HCI_GRP_LINK_CONT_CMDS)) {
       if (data[0] == 0x00) {
         hciListener(bluetooth, HCIInquiryStarted{});
       } else {
@@ -400,7 +383,11 @@ struct Bluetooth::Impl {
           bluetooth,
           HCIConnectionFailed{
               .bdaddr = bdaddr, .handle = handle, .reason = status, .accepted = !connectRequests.contains(bdaddr)});
-      ESP_LOGW(TAG, "Connection complete failed status=0x%02X; re-enabling page scan", status);
+      if (status == 0x0F) {
+        ESP_LOGD(TAG, "Connection request rejected; re-enabling page scan");
+      } else {
+        ESP_LOGW(TAG, "Connection complete failed status=0x%02X; re-enabling page scan", status);
+      }
       CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     }
     connectRequests.erase(bdaddr);
@@ -438,6 +425,11 @@ struct Bluetooth::Impl {
     if (it != linkKeys_.end()) {
       ESP_LOGD(TAG, "Link key found, replying for %s", formatHex((uint8_t *)&bdaddr, 6));
       CHECK_RESULT(enqueue_cmd_link_key_reply(txBuffer, bdaddr, it->second.data()));
+      return;
+    }
+    std::array<uint8_t, 16> key;
+    if (loadLinkKey_(bdaddr, &key)) {
+      CHECK_RESULT(enqueue_cmd_link_key_reply(txBuffer, bdaddr, key.data()));
       return;
     }
     ESP_LOGD(TAG, "No stored link key for %s", formatHex((uint8_t *)&bdaddr, 6));

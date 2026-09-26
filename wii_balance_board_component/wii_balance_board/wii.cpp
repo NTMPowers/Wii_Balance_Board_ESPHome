@@ -286,8 +286,13 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       [this](const HCIConnectionFailed &result) {
                         pendingReconnect.reset();
                         reconnecting = false;
-                        ESP_LOGE(TAG, "Failed to connect Wiimote %s reason=0x%02X",
-                                 formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
+                        if (result.reason == 0x0F) {
+                          ESP_LOGD(TAG, "Connection request rejected for %s",
+                                   formatHex((uint8_t *) &result.bdaddr, 6));
+                        } else {
+                          ESP_LOGW(TAG, "Failed to connect board %s reason=0x%02X",
+                                   formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
+                        }
                       },
                         [this](const HCIConnectionEstablished &result) {
                           ESP_LOGD(TAG, "Board link established handle=%u", result.handle);

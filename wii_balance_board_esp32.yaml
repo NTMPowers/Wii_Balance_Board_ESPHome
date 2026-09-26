@@ -67,10 +67,11 @@ button:
 
 text:
   - platform: template
-    name: "Reference weight (kg)"
+    name: "Calibration weight"
     mode: text
     min_length: 1
-    max_length: 8
+    max_length: 6
+    pattern: "(?:[2-9][0-9]|1[0-4][0-9]|150)(?:[.,][0-9]{1,2})?"
     optimistic: true
     set_action:
       then:
