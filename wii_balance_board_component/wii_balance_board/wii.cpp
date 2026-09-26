@@ -253,13 +253,14 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
     ESP_LOGD(TAG, "Received connection request at %lu ms from %s", static_cast<unsigned long>(millis()),
              formatHex((uint8_t *) &result.bdaddr, 6));
-    if (result.classOfDevice == 0x042500 && static_cast<int32_t>(millis() - rejectBoardPagesUntil) >= 0) {
-      ESP_LOGD(TAG, "Accepting board connection from paired device");
-      return true;  // Accept incoming connections from balance board
-    }
     if (result.classOfDevice == 0x042500) {
-      ESP_LOGD(TAG, "Rejecting board page during disconnect cooldown (%u ms remain)",
-               static_cast<unsigned>(rejectBoardPagesUntil - millis()));
+      if (static_cast<int32_t>(millis() - rejectBoardPagesUntil) < 0) {
+        disconnectBoardPages.emplace(result.bdaddr);
+        ESP_LOGD(TAG, "Accepting board page during cooldown so the link can be closed cleanly");
+      } else {
+        ESP_LOGD(TAG, "Accepting board connection from paired device");
+      }
+      return true;  // Accept incoming connections from balance board
     }
     return false;  // Reject all other incoming connections
   });
@@ -286,6 +287,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       [this](const HCIConnectionFailed &result) {
                         pendingReconnect.reset();
                         reconnecting = false;
+                        disconnectBoardPages.erase(result.bdaddr);
                         if (result.reason == 0x0F) {
                           ESP_LOGD(TAG, "Connection request rejected for %s",
                                    formatHex((uint8_t *) &result.bdaddr, 6));
@@ -295,6 +297,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                         }
                       },
                         [this](const HCIConnectionEstablished &result) {
+                          if (disconnectBoardPages.erase(result.bdaddr) > 0) {
+                            ESP_LOGI(TAG, "Closing board retry during disconnect cooldown");
+                            bluetooth->disconnect(result.handle);
+                            return;
+                          }
                           ESP_LOGD(TAG, "Board link established handle=%u", result.handle);
 
                          pendingReconnect.reset();
