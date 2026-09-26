@@ -324,7 +324,7 @@ static bool enqueue_cmd_reject_connection(RingBuffer &buffer, uint64_t bd_addr, 
   return false;
 }
 
-static bool enqueue_cmd_disconnect(RingBuffer &buffer, uint16_t connection_handle) {
+static bool enqueue_cmd_disconnect(RingBuffer &buffer, uint16_t connection_handle, uint8_t reason) {
   if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 3)) {
     uint8_t *buf = out.data();
     UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
@@ -332,7 +332,7 @@ static bool enqueue_cmd_disconnect(RingBuffer &buffer, uint16_t connection_handl
     UINT8_TO_STREAM(buf, 3);
 
     UINT16_TO_STREAM(buf, connection_handle);
-    UINT8_TO_STREAM(buf, 0x15);
+    UINT8_TO_STREAM(buf, reason);
     return true;
   }
   return false;

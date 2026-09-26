@@ -535,8 +535,9 @@ struct Bluetooth::Impl {
   void sendHCIReset() { CHECK_RESULT(enqueue_cmd_reset(txBuffer)); }
 
   void sendHCIDisconnect(uint16_t handle) {
-    ESP_LOGD(TAG, "Queuing Disconnect handle=%d reason=0x13", handle);
-    CHECK_RESULT(enqueue_cmd_disconnect(txBuffer, handle));
+    constexpr uint8_t reason = 0x13;
+    ESP_LOGD(TAG, "Queuing Disconnect handle=%u reason=0x%02X", handle, reason);
+    CHECK_RESULT(enqueue_cmd_disconnect(txBuffer, handle, reason));
   }
 
   void sendHCIScan() {
