@@ -53,7 +53,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_WEIGHT): sensor.sensor_schema(
             unit_of_measurement=UNIT_KILOGRAM,
             icon=ICON_SCALE,
-            accuracy_decimals=1,
+            accuracy_decimals=2,
             state_class=STATE_CLASS_MEASUREMENT,
             device_class=DEVICE_CLASS_WEIGHT,
         ),

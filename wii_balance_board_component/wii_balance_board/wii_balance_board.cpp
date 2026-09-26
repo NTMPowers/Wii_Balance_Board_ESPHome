@@ -103,7 +103,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   float adjusted = (.999 * totalWeight * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
 
   // Ignore small samples (noise), in std dev calculation.
-  if (adjusted < 10) {
+  if (adjusted < 1.0f) {
     return;
   }
 
@@ -132,7 +132,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
     float deviation = std::sqrt(variance);
 
-    if (mean > 10 && deviation < std_dev_) {  // Ignore all means below 10kg.
+    if (mean >= 1.0f && deviation < std_dev_) {
       sample.measurement = mean;
       if (reference_temperature_sensor_ != nullptr)
         reference_temperature_sensor_->publish_state(sample.referenceTemperature);

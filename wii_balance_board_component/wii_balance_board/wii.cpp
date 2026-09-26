@@ -251,7 +251,8 @@ class Wii::BalanceBoard {
 
 Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
-    ESP_LOGI(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
+    ESP_LOGI(TAG, "Received connection request at %lu ms from %s", static_cast<unsigned long>(millis()),
+             formatHex((uint8_t *) &result.bdaddr, 6));
     if (result.classOfDevice == 0x042500 && static_cast<int32_t>(millis() - rejectBoardPagesUntil) >= 0) {
       ESP_LOGI(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
