@@ -36,6 +36,17 @@ using WiiEvent =
 
 class Wii {
   struct BalanceBoard;
+  struct PendingL2CAPDisconnect {
+    uint16_t handle;
+    uint16_t psm;
+    uint8_t attempts;
+    uint32_t retry_at;
+  };
+  struct PendingHCIDisconnect {
+    uint16_t handle;
+    uint8_t attempts;
+    uint32_t retry_at;
+  };
   Bluetooth *bluetooth;
   std::unordered_map<uint16_t, std::unique_ptr<BalanceBoard>> connectedBoards;
   std::unordered_map<uint16_t, uint64_t> handleToBdaddr;
@@ -44,6 +55,8 @@ class Wii {
   std::unordered_set<uint16_t> initiatorHandles;
   std::unordered_set<uint64_t> disconnectBoardPages;
   std::optional<uint64_t> pendingReconnect;
+  std::optional<PendingL2CAPDisconnect> pendingL2CAPDisconnect;
+  std::optional<PendingHCIDisconnect> pendingHCIDisconnect;
   bool reconnecting{false};
   uint32_t rejectBoardPagesUntil{0};
   std::function<void(const WiiEvent &)> eventListener;
@@ -59,6 +72,12 @@ class Wii {
   void step();
 
   void disconnect(uint16_t handle, uint16_t psm);
+
+ protected:
+  void startL2CAPDisconnect_(uint16_t handle, uint16_t psm);
+  void sendL2CAPDisconnectAttempt_();
+  void startHCIDisconnect_(uint16_t handle);
+  void processDisconnectRetries_();
 };
 
 }  // namespace esphome::wii_balance_board::detail

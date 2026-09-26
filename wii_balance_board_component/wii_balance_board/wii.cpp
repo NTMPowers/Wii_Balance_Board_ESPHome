@@ -11,6 +11,9 @@
 #include "utils.h"
 
 static const char *TAG = "wii";
+static constexpr uint8_t DISCONNECT_MAX_ATTEMPTS = 3;
+static constexpr uint32_t L2CAP_DISCONNECT_RETRY_MS = 250;
+static constexpr uint32_t HCI_DISCONNECT_RETRY_MS = 500;
 
 namespace esphome::wii_balance_board::detail {
 
@@ -299,7 +302,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                         [this](const HCIConnectionEstablished &result) {
                           if (disconnectBoardPages.erase(result.bdaddr) > 0) {
                             ESP_LOGI(TAG, "Closing board retry during disconnect cooldown");
-                            bluetooth->disconnect(result.handle);
+                            startHCIDisconnect_(result.handle);
                             return;
                           }
                           ESP_LOGD(TAG, "Board link established handle=%u", result.handle);
@@ -336,6 +339,12 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                            [this](const HCIDisconnected &result) {
                              ESP_LOGD(TAG, "Disconnected handle=%u reason=0x%02X", result.handle, result.reason);
                              rejectBoardPagesUntil = millis() + 5000;
+                             if (pendingL2CAPDisconnect && pendingL2CAPDisconnect->handle == result.handle) {
+                               pendingL2CAPDisconnect.reset();
+                             }
+                             if (pendingHCIDisconnect && pendingHCIDisconnect->handle == result.handle) {
+                               pendingHCIDisconnect.reset();
+                             }
                               pendingPSM13.erase(result.handle);
                               pendingEncryption.erase(result.handle);
                               initiatorHandles.erase(result.handle);
@@ -378,15 +387,26 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
     std::visit(overloaded{
                    [this](const ACLConnectionFailed &) {},
                        [this](const ACLDisconnected &info) {
-                          if (info.psm == 0x13) {
+                              if (info.psm == 0x0013) {
                              pendingPSM13.erase(info.handle);
                              pendingEncryption.erase(info.handle);
                            this->eventListener(BalanceBoardDisconnected{
                               .handle = info.handle,
                           });
                           connectedBoards.erase(info.handle);
-                          handleToBdaddr.erase(info.handle);
-                          bluetooth->disconnect(info.handle);
+                                 if (pendingL2CAPDisconnect && pendingL2CAPDisconnect->handle == info.handle &&
+                                     pendingL2CAPDisconnect->psm == info.psm) {
+                                   pendingL2CAPDisconnect.reset();
+                                 }
+                                 ESP_LOGD(TAG, "Data channel closed; closing control channel");
+                                 startL2CAPDisconnect_(info.handle, 0x0011);
+                            } else if (info.psm == 0x0011) {
+                                 if (pendingL2CAPDisconnect && pendingL2CAPDisconnect->handle == info.handle &&
+                                     pendingL2CAPDisconnect->psm == info.psm) {
+                                   pendingL2CAPDisconnect.reset();
+                                 }
+                                 ESP_LOGD(TAG, "Control channel closed; disconnecting Bluetooth link");
+                                 startHCIDisconnect_(info.handle);
                         }
                       },
                      [this, bt](const ACLConnectionEstablished &conn) {
@@ -434,6 +454,7 @@ void Wii::step() {
     bluetooth->connect(bdaddr);
   }
   bluetooth->process();
+  processDisconnectRetries_();
 }
 
 void Wii::onEvent(std::function<void(const WiiEvent &)> eventListener) {
@@ -442,7 +463,69 @@ void Wii::onEvent(std::function<void(const WiiEvent &)> eventListener) {
 
 void Wii::disconnect(uint16_t handle, uint16_t psm) {
   rejectBoardPagesUntil = millis() + 5000;
-  bluetooth->l2cap_disconnect(handle, psm);
+  startL2CAPDisconnect_(handle, psm);
+}
+
+void Wii::startL2CAPDisconnect_(uint16_t handle, uint16_t psm) {
+  pendingL2CAPDisconnect = PendingL2CAPDisconnect{
+      .handle = handle,
+      .psm = psm,
+      .attempts = 0,
+      .retry_at = millis(),
+  };
+  sendL2CAPDisconnectAttempt_();
+}
+
+void Wii::sendL2CAPDisconnectAttempt_() {
+  if (!pendingL2CAPDisconnect) {
+    return;
+  }
+  auto &pending = *pendingL2CAPDisconnect;
+  ++pending.attempts;
+  pending.retry_at = millis() + L2CAP_DISCONNECT_RETRY_MS;
+  ESP_LOGD(TAG, "Sending L2CAP disconnect psm=0x%04X attempt=%u/%u", pending.psm, pending.attempts,
+           DISCONNECT_MAX_ATTEMPTS);
+  bluetooth->l2cap_disconnect(pending.handle, pending.psm);
+}
+
+void Wii::startHCIDisconnect_(uint16_t handle) {
+  if (pendingHCIDisconnect && pendingHCIDisconnect->handle == handle) {
+    return;
+  }
+  pendingHCIDisconnect = PendingHCIDisconnect{
+      .handle = handle,
+      .attempts = 1,
+      .retry_at = millis() + HCI_DISCONNECT_RETRY_MS,
+  };
+  bluetooth->disconnect(handle);
+}
+
+void Wii::processDisconnectRetries_() {
+  const uint32_t now = millis();
+  if (pendingL2CAPDisconnect && static_cast<int32_t>(now - pendingL2CAPDisconnect->retry_at) >= 0) {
+    if (pendingL2CAPDisconnect->attempts < DISCONNECT_MAX_ATTEMPTS) {
+      sendL2CAPDisconnectAttempt_();
+    } else {
+      const uint16_t handle = pendingL2CAPDisconnect->handle;
+      const uint16_t psm = pendingL2CAPDisconnect->psm;
+      pendingL2CAPDisconnect.reset();
+      ESP_LOGW(TAG, "L2CAP disconnect timed out for psm=0x%04X; forcing Bluetooth disconnect", psm);
+      startHCIDisconnect_(handle);
+    }
+  }
+
+  if (pendingHCIDisconnect && static_cast<int32_t>(now - pendingHCIDisconnect->retry_at) >= 0) {
+    if (pendingHCIDisconnect->attempts < DISCONNECT_MAX_ATTEMPTS) {
+      ++pendingHCIDisconnect->attempts;
+      pendingHCIDisconnect->retry_at = now + HCI_DISCONNECT_RETRY_MS;
+      ESP_LOGD(TAG, "Retrying HCI disconnect attempt=%u/%u", pendingHCIDisconnect->attempts,
+               DISCONNECT_MAX_ATTEMPTS);
+      bluetooth->disconnect(pendingHCIDisconnect->handle);
+    } else {
+      ESP_LOGE(TAG, "HCI disconnect was not confirmed for handle=%u", pendingHCIDisconnect->handle);
+      pendingHCIDisconnect.reset();
+    }
+  }
 }
 
 }  // namespace esphome::wii_balance_board::detail
