@@ -385,7 +385,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   }
 
   // Ignore small samples (noise), in std dev calculation.
-  const float minimum_weight = sample.calibrated ? 1.0f : 10.0f;
+  constexpr float minimum_weight = 3.0f;
   if (adjusted < minimum_weight) {
     const uint32_t now = millis();
     if (static_cast<uint32_t>(now - last_low_weight_log_ms_) >= 1000) {
