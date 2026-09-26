@@ -479,7 +479,11 @@ void WiiBalanceBoard::loop() {
 }
 
 void WiiBalanceBoard::sync(bool enable) {
-  ESP_LOGI(TAG, enable ? "Starting scan" : "Stopping scan");
+  if (enable) {
+    ESP_LOGI(TAG, "Sync scan started");
+  } else {
+    ESP_LOGD(TAG, "Stopping sync scan");
+  }
   wii.sync(enable);
 }
 
