@@ -24,6 +24,7 @@ class Wii::BalanceBoard {
   std::array<uint16_t, 12> calibration;
 
   uint8_t referenceTemperature{0};
+  bool lastAButtonPressed{false};
 
  public:
   BalanceBoard(Bluetooth *bt, uint16_t handle) : bt(bt), handle(handle), queryState(0) {}
@@ -221,6 +222,13 @@ class Wii::BalanceBoard {
       return false;
     }
     if (data[0] == 0xA1) {
+      if (len >= 4 && data[1] != 0x3D) {
+        const bool aButtonPressed = (data[3] & 0x08) != 0;
+        if (aButtonPressed && !lastAButtonPressed) {
+          ESP_LOGD(TAG, "Balance Board A button pressed");
+        }
+        lastAButtonPressed = aButtonPressed;
+      }
       // A non-zero reference temperature means we have calibrated
       if (data[1] == 0x34 && referenceTemperature != 0) {
         if (len < 15) {

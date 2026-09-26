@@ -74,6 +74,7 @@ class WiiBalanceBoard : public Component {
   detail::Wii wii;
   std::unordered_map<uint16_t, Sample> sampleMap;
   detail::TaskQueue queue;
+  uint32_t last_low_weight_log_ms_{0};
   // Session generation: incremented on every board_connected. Disconnect
   // tasks capture the generation at scheduling time and are discarded when it
   // is stale, so a timer from a dead session can never kill a fresh one
