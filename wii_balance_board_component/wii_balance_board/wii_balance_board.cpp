@@ -434,7 +434,10 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
       // We have a valid sample, schedule board disconnect.
       ESP_LOGI(TAG, "Weight measured: %.2f kg", mean);
-      queue.reschedule(handle, millis() + 100);
+      if (!queue.reschedule(handle, millis() + 100)) {
+        ESP_LOGW(TAG, "Disconnect timer missing after measurement; scheduling fallback");
+        schedule_disconnect_(handle, active_generation_, 100);
+      }
     }
   }
 }
