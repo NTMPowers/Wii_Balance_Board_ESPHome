@@ -251,9 +251,12 @@ class Wii::BalanceBoard {
 Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
     ESP_LOGI(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
-    if (result.classOfDevice == 0x042500) {
+    if (result.classOfDevice == 0x042500 && allowBoardPage) {
       ESP_LOGI(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
+    }
+    if (result.classOfDevice == 0x042500) {
+      ESP_LOGI(TAG, "Rejecting board page; start sync to allow a connection");
     }
     return false;  // Reject all other incoming connections
   });
@@ -261,7 +264,10 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIEvent([this](Bluetooth *bt, const HCIEvent &event) {
     std::visit(overloaded{
                    [this](const HCIInquiryStarted &) { this->eventListener(ScanStarted{}); },
-                   [this](const HCIInquiryComplete &) { this->eventListener(ScanStopped{}); },
+                   [this](const HCIInquiryComplete &) {
+                     allowBoardPage = false;
+                     this->eventListener(ScanStopped{});
+                   },
                    [bt](const HCIInquiryResult &result) {
                      if (result.classOfDevice == 0x042500) {
                        bt->requestRemoteName(result);
@@ -316,6 +322,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                     },
                            [this](const HCIDisconnected &result) {
                              ESP_LOGI(TAG, "Disconnected %d reason=0x%02X", result.handle, result.reason);
+                             allowBoardPage = false;
                               pendingPSM13.erase(result.handle);
                               pendingEncryption.erase(result.handle);
                               initiatorHandles.erase(result.handle);
@@ -359,6 +366,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                    [this](const ACLConnectionFailed &) {},
                        [this](const ACLDisconnected &info) {
                           if (info.psm == 0x13) {
+                            allowBoardPage = false;
                              pendingPSM13.erase(info.handle);
                              pendingEncryption.erase(info.handle);
                            this->eventListener(BalanceBoardDisconnected{
@@ -403,7 +411,10 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
 
 Wii::~Wii() {}
 
-void Wii::sync(bool enable) { bluetooth->scan(enable); }
+void Wii::sync(bool enable) {
+  allowBoardPage = enable;
+  bluetooth->scan(enable);
+}
 
 void Wii::step() {
   if (pendingReconnect.has_value() && !reconnecting) {
