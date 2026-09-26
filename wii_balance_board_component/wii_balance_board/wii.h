@@ -53,6 +53,7 @@ class Wii {
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
+  std::unordered_set<uint16_t> cooldownDisconnectHandles;
   std::unordered_set<uint64_t> disconnectBoardPages;
   std::optional<uint64_t> pendingReconnect;
   std::optional<PendingL2CAPDisconnect> pendingL2CAPDisconnect;
