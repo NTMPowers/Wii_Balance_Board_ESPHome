@@ -8,9 +8,9 @@
 
 /*  HCI Command opcode group field(OGF) */
 #define HCI_GRP_LINK_CONT_CMDS (0x01 << 10)          /* 0x0400 */
+#define HCI_GRP_POLICY_SETTINGS_CMDS (0x02 << 10)    /* 0x0800 */
 #define HCI_GRP_HOST_CONT_BASEBAND_CMDS (0x03 << 10) /* 0x0C00 */
 #define HCI_GRP_INFO_PARAMS_CMDS (0x04 << 10)
-#define HCI_GRP_POLICY_SETTINGS_CMDS (0x02 << 10)    /* 0x0800 */
 
 // OGF + OCF
 #define HCI_RESET (0x0003 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
@@ -275,9 +275,9 @@ static bool enqueue_cmd_write_default_link_policy(RingBuffer &buffer, uint16_t s
   if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 2)) {
     uint8_t *buf = out.data();
     UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
-    UINT16_TO_STREAM(buf, (0x000F | HCI_GRP_POLICY_SETTINGS_CMDS));  // Write_Default_Link_Policy_Settings
+    UINT16_TO_STREAM(buf, (0x000F | HCI_GRP_POLICY_SETTINGS_CMDS));
     UINT8_TO_STREAM(buf, 2);
-    UINT16_TO_STREAM(buf, settings);  // bit0: role switch enabled
+    UINT16_TO_STREAM(buf, settings);
     return true;
   }
   return false;
@@ -287,10 +287,10 @@ static bool enqueue_cmd_switch_role(RingBuffer &buffer, uint64_t bd_addr, uint8_
   if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 7)) {
     uint8_t *buf = out.data();
     UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
-    UINT16_TO_STREAM(buf, (0x000B | HCI_GRP_POLICY_SETTINGS_CMDS));  // Switch_Role
+    UINT16_TO_STREAM(buf, (0x000B | HCI_GRP_POLICY_SETTINGS_CMDS));
     UINT8_TO_STREAM(buf, 7);
     U64_ADDR_TO_STREAM(buf, bd_addr);
-    UINT8_TO_STREAM(buf, role);  // 0x00 = master
+    UINT8_TO_STREAM(buf, role);
     return true;
   }
   return false;

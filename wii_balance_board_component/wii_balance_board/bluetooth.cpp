@@ -61,6 +61,9 @@ class ConnectionStore {
                             [handle, localCid](const L2CapConnection &connection) {
                               return connection.handle == handle && connection.localCid == localCid;
                             });
+    if (itr == l2CapConnections.end()) {
+      return nullptr;
+    }
     return &*itr;
   }
 
@@ -69,6 +72,9 @@ class ConnectionStore {
                             [handle, psm](const L2CapConnection &connection) {
                               return connection.handle == handle && connection.psm == psm;
                             });
+    if (itr == l2CapConnections.end()) {
+      return nullptr;
+    }
     return &*itr;
   }
 
@@ -203,15 +209,29 @@ struct Bluetooth::Impl {
       uint8_t typeColor;
       switch (rxData[0]) {
         case 0x04:
+          if (rxData.size() < 3 || rxData.size() != static_cast<size_t>(rxData[2]) + 3) {
+            ESP_LOGW(TAG, "Dropping malformed HCI event (%u bytes)", static_cast<unsigned>(rxData.size()));
+            break;
+          }
           type = "HCI";
           typeColor = 44;
           handleHCIEvent(rxData[1], rxData.data() + 3, rxData[2]);
           break;
         case 0x02:
+          if (rxData.size() < 9) {
+            ESP_LOGW(TAG, "Dropping short ACL packet (%u bytes)", static_cast<unsigned>(rxData.size()));
+            break;
+          }
           type = "ACL";
           typeColor = 43;
           {
             ESP_LOGV(TAG, "ACL RX (%u bytes): %s", (unsigned)rxData.size(), formatHex(rxData.data(), rxData.size()));
+            uint16_t aclLength = (rxData[4] << 8) | rxData[3];
+            if (rxData.size() != static_cast<size_t>(aclLength) + 5 || aclLength < 4) {
+              ESP_LOGW(TAG, "Dropping malformed ACL frame size=%u acl_length=%u", static_cast<unsigned>(rxData.size()),
+                       aclLength);
+              break;
+            }
             uint16_t handle = ((rxData[2] & 0x0F) << 8) | rxData[1];
             uint8_t packetBoundaryFlag = (rxData[2] & 0x30) >> 4;  // Packet_Boundary_Flag
             uint8_t broadcastFlag = (rxData[2] & 0xC0) >> 6;       // Broadcast_Flag
@@ -227,8 +247,14 @@ struct Bluetooth::Impl {
             }
 
             uint16_t len = (rxData[6] << 8) | rxData[5];
+            if (len != aclLength - 4) {
+              ESP_LOGW(TAG, "Dropping malformed L2CAP frame length=%u acl_payload=%u", len, aclLength - 4);
+              break;
+            }
             uint16_t channelId = (rxData[8] << 8) | rxData[7];
-            handleACLEvent(rxData[9], handle, channelId, rxData.data() + 9, len);
+            if (len > 0) {
+              handleACLEvent(rxData[9], handle, channelId, rxData.data() + 9, len);
+            }
           }
           break;
         default:

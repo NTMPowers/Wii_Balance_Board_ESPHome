@@ -32,30 +32,49 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
 
   if (sampleMap.count(handle) > 0) {
     ESP_LOGE(TAG, "Same handle connected twice, ignoring connection.");
-  } else {
-    // Queue sampling timeout
-    sampleMap.emplace(handle, Sample());
-
-    // Schedule timeout disconnect
-    queue.add(handle, millis() + 15000, [this](int handle) {
-      ESP_LOGI(TAG, "Scheduled disconnect.");
-      wii.disconnect(handle, 0x0011);
-      wii.disconnect(handle, 0x0013);
-    });
+    return;
   }
+
+  // Drop any stale disconnect task for a previous connection with this handle
+  // (handles get reused on quick reconnects), then queue sampling state.
+  queue.cancel(handle);
+
+  // Queue sampling timeout
+  sampleMap.emplace(handle, Sample());
+
+  // Schedule timeout disconnect; guarded by session generation so a task from
+  // a dead session cannot fire on a new connection reusing the same handle.
+  uint32_t generation = ++sessionGeneration;
+  queue.add(handle, millis() + 15000, [this, generation](int handle) {
+    if (generation != sessionGeneration) {
+      ESP_LOGD(TAG, "Ignoring stale scheduled disconnect");
+      return;
+    }
+    ESP_LOGI(TAG, "Scheduled disconnect.");
+    wii.disconnect(handle, 0x0011);
+    wii.disconnect(handle, 0x0013);
+  });
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {
-  ESP_LOGI(TAG, "Board disconnected, uploaded sampled data.");
+  ESP_LOGI(TAG, "Board disconnected handle=%u", handle);
+  // Cancel any pending scheduled disconnect for this handle so it cannot
+  // fire on a future connection that reuses the same handle number.
+  queue.cancel(handle);
   if (sampleMap.count(handle) > 0) {
     auto &sample = sampleMap[handle];
-    if (sample.referenceTemperature > 0) {
-      reference_temperature_sensor_->publish_state(sample.referenceTemperature);
-      temperature_sensor_->publish_state(sample.temperature);
-      battery_level_->publish_state(sample.battery);
-    }
-    if (!isnan(sample.measurement)) {
-      weight_->publish_state(sample.measurement);
+    if (!sample.measurement_published) {
+      if (sample.referenceTemperature > 0) {
+        if (reference_temperature_sensor_ != nullptr)
+          reference_temperature_sensor_->publish_state(sample.referenceTemperature);
+        if (temperature_sensor_ != nullptr)
+          temperature_sensor_->publish_state(sample.temperature);
+        if (battery_level_ != nullptr)
+          battery_level_->publish_state(sample.battery);
+      }
+      if (!isnan(sample.measurement) && weight_ != nullptr) {
+        weight_->publish_state(sample.measurement);
+      }
     }
     sampleMap.erase(handle);
   }
@@ -65,7 +84,12 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
 
 void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature,
                                    float topRightLoad, float bottomRightLoad, float topLeftLoad, float bottomLeftLoad) {
-  Sample &sample = sampleMap.at(handle);
+  auto sampleIt = sampleMap.find(handle);
+  if (sampleIt == sampleMap.end()) {
+    ESP_LOGD(TAG, "Ignoring measurement for inactive handle=%u", handle);
+    return;
+  }
+  Sample &sample = sampleIt->second;
 
   // Ignore zero data
   if (reference_temp == 0 || !isnan(sample.measurement)) {
@@ -87,9 +111,10 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   int size = 64;
   sample.samples[sample.sample_count] = adjusted;
   sample.sample_count = (sample.sample_count + 1) % size;
+  sample.samples_filled = std::min(sample.samples_filled + 1, static_cast<size_t>(size));
 
   // Not enough samples yet
-  if (isnan(sample.samples[size - 1])) {
+  if (sample.samples_filled < static_cast<size_t>(size)) {
     return;
   }
 
@@ -110,9 +135,18 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
     if (mean > 10 && deviation < std_dev_) {  // Ignore all means below 10kg.
       sample.measurement = mean;
+      if (reference_temperature_sensor_ != nullptr)
+        reference_temperature_sensor_->publish_state(sample.referenceTemperature);
+      if (temperature_sensor_ != nullptr)
+        temperature_sensor_->publish_state(sample.temperature);
+      if (battery_level_ != nullptr)
+        battery_level_->publish_state(sample.battery);
+      if (weight_ != nullptr)
+        weight_->publish_state(sample.measurement);
+      sample.measurement_published = true;
 
       // We have a valid sample, schedule board disconnect.
-      ESP_LOGD(TAG, "Sample valid, disconnecting");
+      ESP_LOGI(TAG, "Stable weight %.2f kg for handle=%u", mean, handle);
       queue.reschedule(handle, millis() + 100);
     }
   }

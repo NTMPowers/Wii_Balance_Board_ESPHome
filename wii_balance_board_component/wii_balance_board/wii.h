@@ -42,10 +42,7 @@ class Wii {
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
-  std::unordered_map<uint16_t, uint64_t> pendingRoleSwitch;
   std::optional<uint64_t> pendingReconnect;
-  uint32_t reconnectT0{0};
-  uint8_t reconnectAttempts{0};
   bool reconnecting{false};
   std::function<void(const WiiEvent &)> eventListener;
 

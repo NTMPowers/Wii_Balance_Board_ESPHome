@@ -13,12 +13,14 @@ namespace esphome {
 namespace wii_balance_board {
 
 struct Sample {
-  float samples[64] = {NAN};
+  float samples[64]{};
   size_t sample_count{0};
+  size_t samples_filled{0};
   uint8_t battery{0};
   uint8_t temperature{0};
   uint8_t referenceTemperature{0};
   float measurement{NAN};
+  bool measurement_published{false};
 };
 
 class WiiBalanceBoard : public Component {
@@ -48,6 +50,11 @@ class WiiBalanceBoard : public Component {
   detail::Wii wii;
   std::unordered_map<uint16_t, Sample> sampleMap;
   detail::TaskQueue queue;
+  // Session generation: incremented on every board_connected. Disconnect
+  // tasks capture the generation at scheduling time and are discarded when it
+  // is stale, so a timer from a dead session can never kill a fresh one
+  // (connection handles are reused by the controller).
+  uint32_t sessionGeneration{0};
 
   float std_dev_;
   int led_pin_;
