@@ -15,7 +15,7 @@ esp32:
 
 # Enable logging
 logger:
-  level: VERBOSE
+  level: DEBUG
 
 # Local device dashboard
 web_server:
@@ -41,29 +41,17 @@ wii_balance_board:
   standard_deviation: 0.3
   led_pin: 2
   temperature_sensor:
-    name: "Balance board temperature"
+    name: "Temperature"
   reference_temperature_sensor:
-    name: "Balance board reference temperature"
+    name: "Reference temperature"
   battery_level:
-    name: "Balance board battery level"
+    name: "Battery level"
   weight:
-    name: "Balance board weight"
+    name: "Weight"
   syncing:
-    name: "Balance board syncing"
+    name: "Syncing"
   calibration_status:
-    name: "Balance board calibration status"
-
-button:
-  - platform: template
-    name: "Start sync"
-    on_press:
-      then:
-        - lambda: 'id(wbb)->sync(true);'
-  - platform: template
-    name: "Calibrate board"
-    on_press:
-      then:
-        - lambda: 'id(wbb)->calibration_button();'
+    name: "Calibration status"
 
 text:
   - platform: template
@@ -76,3 +64,15 @@ text:
     set_action:
       then:
         - lambda: 'id(wbb)->set_calibration_reference_weight(x);'
+
+button:
+  - platform: template
+    name: "Start sync"
+    on_press:
+      then:
+        - lambda: 'id(wbb)->sync(true);'
+  - platform: template
+    name: "Calibration"
+    on_press:
+      then:
+        - lambda: 'id(wbb)->calibration_button();'

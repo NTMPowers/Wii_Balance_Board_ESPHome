@@ -39,7 +39,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_TEMPERATURE,
             default={
-                CONF_NAME: "Balance board temperature",
+                CONF_NAME: "Temperature",
             },
         ): sensor.sensor_schema(
             unit_of_measurement=UNIT_CELSIUS,
@@ -51,7 +51,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_REF_TEMPERATURE,
             default={
-                CONF_NAME: "Balance board reference temperature",
+                CONF_NAME: "Reference temperature",
             },
         ): sensor.sensor_schema(
             unit_of_measurement=UNIT_CELSIUS,
@@ -63,7 +63,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_BATTERY_LEVEL,
             default={
-                CONF_NAME: "Balance board battery level",
+                CONF_NAME: "Battery level",
             },
         ): sensor.sensor_schema(
             unit_of_measurement=UNIT_PERCENT,
@@ -75,7 +75,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_WEIGHT,
             default={
-                CONF_NAME: "Balance board weight",
+                CONF_NAME: "Weight",
             },
         ): sensor.sensor_schema(
             unit_of_measurement=UNIT_KILOGRAM,
@@ -87,7 +87,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_SYNCING,
             default={
-                CONF_NAME: "Balance board syncing",
+                CONF_NAME: "Syncing",
             },
         ): binary_sensor.binary_sensor_schema(
             icon=ICON_BLUETOOTH,
@@ -95,7 +95,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_CALIBRATION_STATUS,
             default={
-                CONF_NAME: "Balance board calibration status",
+                CONF_NAME: "Calibration status",
             },
         ): text_sensor.text_sensor_schema(icon=ICON_SCALE),
         cv.Optional(CONF_STDDEV, default=0.4): cv.float_range(0, 5),

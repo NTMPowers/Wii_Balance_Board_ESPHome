@@ -199,7 +199,8 @@ void WiiBalanceBoard::calibration_button() {
       calibration_stage_ = CalibrationStage::WAIT_FOR_EMPTY;
       reset_calibration_samples_();
       refresh_calibration_timeout_();
-      ESP_LOGI(TAG, "Calibration started. Remove everything from the board, then press the calibration button again.");
+      ESP_LOGI(TAG, "Calibration started. Remove everything from the board.");
+      ESP_LOGI(TAG, "Press Calibration when the board is empty.");
       break;
     case CalibrationStage::WAIT_FOR_EMPTY:
       calibration_stage_ = CalibrationStage::CAPTURE_EMPTY;
@@ -210,15 +211,18 @@ void WiiBalanceBoard::calibration_button() {
     case CalibrationStage::WAIT_FOR_LOAD:
       if (!std::isfinite(calibration_reference_weight_) || calibration_reference_weight_ < 20.0f ||
           calibration_reference_weight_ > 150.0f) {
-        ESP_LOGI(TAG, "Enter your weight, press the calibration button, then step onto the board.");
+        ESP_LOGI(TAG, "Enter your weight first.");
+        ESP_LOGI(TAG, "Then press Calibration and stand on the board.");
+        ESP_LOGI(TAG, "Hold still until calibration is complete.");
         refresh_calibration_timeout_();
         break;
       }
       calibration_stage_ = CalibrationStage::CAPTURE_LOAD;
       reset_calibration_samples_();
       refresh_calibration_timeout_();
-      ESP_LOGI(TAG, "Loaded capture armed for %.2f kg. Step onto the board with that weight, hold still, and wait for completion.",
-           calibration_reference_weight_);
+      ESP_LOGI(TAG, "Weight to use: %.2f kg.", calibration_reference_weight_);
+      ESP_LOGI(TAG, "Stand on the board with that weight.");
+      ESP_LOGI(TAG, "Hold still until calibration is complete.");
       break;
     case CalibrationStage::CAPTURE_EMPTY:
     case CalibrationStage::CAPTURE_LOAD:
@@ -302,7 +306,8 @@ void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
     reset_calibration_samples_();
     refresh_calibration_timeout_();
     ESP_LOGD(TAG, "Empty capture value: %.2f kg", calibration_empty_weight_);
-    ESP_LOGI(TAG, "Empty capture complete. Enter your weight, then press the calibration button before stepping on.");
+    ESP_LOGI(TAG, "Empty-board calibration is complete.");
+    ESP_LOGI(TAG, "Enter your weight, then press Calibration.");
     return;
   }
 
