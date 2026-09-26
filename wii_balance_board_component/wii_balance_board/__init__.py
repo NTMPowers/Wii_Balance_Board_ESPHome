@@ -1,5 +1,5 @@
 import esphome.codegen as cg
-from esphome.components import binary_sensor, sensor
+from esphome.components import binary_sensor, sensor, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BATTERY_LEVEL,
@@ -18,10 +18,11 @@ from esphome.const import (
     UNIT_PERCENT,
 )
 
-DEPENDENCIES = ["binary_sensor", "sensor"]
-AUTO_LOAD = ["binary_sensor", "sensor"]
+DEPENDENCIES = ["binary_sensor", "sensor", "text_sensor"]
+AUTO_LOAD = ["binary_sensor", "sensor", "text_sensor"]
 
 CONF_SYNCING = "syncing"
+CONF_CALIBRATION_STATUS = "calibration_status"
 CONF_WEIGHT = "weight"
 CONF_TEMPERATURE = "temperature_sensor"
 CONF_REF_TEMPERATURE = "reference_temperature_sensor"
@@ -91,6 +92,12 @@ CONFIG_SCHEMA = cv.Schema(
         ): binary_sensor.binary_sensor_schema(
             icon=ICON_BLUETOOTH,
         ),
+        cv.Optional(
+            CONF_CALIBRATION_STATUS,
+            default={
+                CONF_NAME: "Balance Board Calibration Status",
+            },
+        ): text_sensor.text_sensor_schema(icon=ICON_SCALE),
         cv.Optional(CONF_STDDEV, default=0.4): cv.float_range(0, 5),
     }
 )
@@ -117,6 +124,9 @@ async def to_code(config):
 
     syncing = await binary_sensor.new_binary_sensor(config.get(CONF_SYNCING))
     cg.add(var.set_syncing(syncing))
+
+    calibration_status = await text_sensor.new_text_sensor(config.get(CONF_CALIBRATION_STATUS))
+    cg.add(var.set_calibration_status_sensor(calibration_status))
 
     if led_pin := config.get(CONF_LED_PIN):
         cg.add(var.set_led_pin(led_pin))

@@ -21,8 +21,9 @@ class TaskQueue {
     while (tasks.size() && std::get<0>(tasks.front()) <= now) {
       std::pop_heap(tasks.begin(), tasks.end(),
                     [](const Task &a, const Task &b) { return std::get<0>(a) < std::get<0>(b); });
-      std::get<2>(tasks.back())(std::get<1>(tasks.back()));
+      Task task = std::move(tasks.back());
       tasks.pop_back();
+      std::get<2>(task)(std::get<1>(task));
     }
   }
 
