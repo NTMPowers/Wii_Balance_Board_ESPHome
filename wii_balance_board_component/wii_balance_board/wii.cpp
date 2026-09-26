@@ -204,7 +204,7 @@ class Wii::BalanceBoard {
             return;
           }
         }
-        ESP_LOGI(TAG, "Calibration complete, reference temperature=%u", referenceTemperature);
+        ESP_LOGD(TAG, "Calibration complete, reference temperature=%u", referenceTemperature);
         set_reporting_mode(handle, 0x34, false);
         queryState = 0;
         break;
@@ -251,14 +251,14 @@ class Wii::BalanceBoard {
 
 Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
-    ESP_LOGI(TAG, "Received connection request at %lu ms from %s", static_cast<unsigned long>(millis()),
+    ESP_LOGD(TAG, "Received connection request at %lu ms from %s", static_cast<unsigned long>(millis()),
              formatHex((uint8_t *) &result.bdaddr, 6));
     if (result.classOfDevice == 0x042500 && static_cast<int32_t>(millis() - rejectBoardPagesUntil) >= 0) {
-      ESP_LOGI(TAG, "Accepting board connection from paired device");
+      ESP_LOGD(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
     }
     if (result.classOfDevice == 0x042500) {
-      ESP_LOGI(TAG, "Rejecting board page during disconnect cooldown (%u ms remain)",
+      ESP_LOGD(TAG, "Rejecting board page during disconnect cooldown (%u ms remain)",
                static_cast<unsigned>(rejectBoardPagesUntil - millis()));
     }
     return false;  // Reject all other incoming connections
@@ -274,13 +274,13 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                      }
                    },
                     [bt](const HCIRemoteName &result) {
-                      ESP_LOGI(TAG, "Found %s %s", result.remoteName.data(), formatHex((uint8_t *) &result.inquiry.bdaddr, 6));
+                      ESP_LOGD(TAG, "Found %s %s", result.remoteName.data(), formatHex((uint8_t *) &result.inquiry.bdaddr, 6));
                       if (result.remoteName == "Nintendo RVL-WBC-01") {
                         bt->connect(result.inquiry);
                       }
                     },
                     [this](const HCIRoleChanged &result) {
-                      ESP_LOGI(TAG, "Role changed status=0x%02X role=0x%02X for %s", result.status, result.newRole,
+                      ESP_LOGD(TAG, "Role changed status=0x%02X role=0x%02X for %s", result.status, result.newRole,
                                formatHex((uint8_t *) &result.bdaddr, 6));
                     },
                       [this](const HCIConnectionFailed &result) {
@@ -290,7 +290,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                                  formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
                       },
                         [this](const HCIConnectionEstablished &result) {
-                          ESP_LOGI(TAG, "Wiimote connection established, handle: %d", result.handle);
+                          ESP_LOGD(TAG, "Board link established handle=%u", result.handle);
 
                          pendingReconnect.reset();
                          reconnecting = false;
@@ -309,7 +309,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                          bluetooth->auth(result.handle);
                       },
                     [bt](const HCILinkKeyRequest &result) {
-                      ESP_LOGI(TAG, "Negative link reply");
+                      ESP_LOGD(TAG, "Negative link reply");
                       bt->negativeReply(result.bdaddr);
                     },
                     [bt](const HCIPINRequest &result) {
@@ -318,11 +318,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       for (size_t i = 0; i < 6; ++i) {
                         pin_data[i] = mac[5 - i];
                       }
-                      ESP_LOGI(TAG, "Sending pin reply");
+                      ESP_LOGD(TAG, "Sending pin reply");
                       bt->sendPinReply(result.bdaddr, pin_data, 6);
                     },
                            [this](const HCIDisconnected &result) {
-                             ESP_LOGI(TAG, "Disconnected %d reason=0x%02X", result.handle, result.reason);
+                             ESP_LOGD(TAG, "Disconnected handle=%u reason=0x%02X", result.handle, result.reason);
                              rejectBoardPagesUntil = millis() + 5000;
                               pendingPSM13.erase(result.handle);
                               pendingEncryption.erase(result.handle);
@@ -331,7 +331,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                           },
                            [this](const HCIAuthComplete &result) {
                             if (result.status == 0x00) {
-                              ESP_LOGI(TAG, "Auth complete for handle=0x%04X, enabling encryption", result.handle);
+                              ESP_LOGD(TAG, "Auth complete for handle=0x%04X, enabling encryption", result.handle);
                               pendingEncryption.emplace(result.handle);
                               bluetooth->setEncryption(result.handle);
                             } else {
@@ -342,11 +342,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                            [this](const HCIEncryptionChange &result) {
                             if (result.status == 0x00 && pendingEncryption.erase(result.handle) > 0) {
                               if (initiatorHandles.erase(result.handle) > 0) {
-                                ESP_LOGI(TAG, "Encryption enabled for handle=0x%04X, opening PSM 0x0011", result.handle);
+                                ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X, opening PSM 0x0011", result.handle);
                                 pendingPSM13.emplace(result.handle);
                                 bluetooth->l2cap_connect(result.handle, 0x0011, 0x40);
                               } else {
-                                ESP_LOGI(TAG, "Encryption enabled for handle=0x%04X, waiting for board to open L2CAP", result.handle);
+                                ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X, waiting for board to open L2CAP", result.handle);
                               }
                             } else if (result.status != 0x00) {
                               pendingEncryption.erase(result.handle);
@@ -358,7 +358,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   });
 
   bt->onACLConnectionRequest([](Bluetooth *, const ACLConnectionRequest &req) {
-    ESP_LOGI(TAG, "Received ACL connection request from %d, psm %02X", req.handle, req.psm);
+    ESP_LOGD(TAG, "Received ACL connection request from %u, psm %02X", req.handle, req.psm);
     return (req.psm == 0x0011 || req.psm == 0x0013);
   });
 
@@ -379,11 +379,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       },
                      [this, bt](const ACLConnectionEstablished &conn) {
                        if (conn.psm == 0x0011 && pendingPSM13.erase(conn.handle) > 0) {
-                         ESP_LOGI(TAG, "PSM 0x0011 established for handle=%d, opening PSM 0x0013", conn.handle);
+                         ESP_LOGD(TAG, "PSM 0x0011 established for handle=%u, opening PSM 0x0013", conn.handle);
                          bt->l2cap_connect(conn.handle, 0x0013, 0x40);
                        } else if (conn.psm == 0x0013) {
                          pendingPSM13.erase(conn.handle);
-                         ESP_LOGI(TAG, "PSM 0x0013 established for handle=%d, board ready", conn.handle);
+                         ESP_LOGD(TAG, "PSM 0x0013 established for handle=%u, board ready", conn.handle);
                          connectedBoards.emplace(conn.handle, std::make_unique<BalanceBoard>(bluetooth, conn.handle));
                          connectedBoards[conn.handle]->setLeds(bluetooth, conn.handle, std::bitset<4>(0b0001));
                          this->eventListener(BalanceBoardConnected{
@@ -418,7 +418,7 @@ void Wii::step() {
     reconnecting = true;
     auto bdaddr = pendingReconnect.value();
     pendingReconnect.reset();
-    ESP_LOGI(TAG, "Reconnecting to board %s", formatHex((uint8_t *) &bdaddr, 6));
+    ESP_LOGD(TAG, "Reconnecting to board %s", formatHex((uint8_t *) &bdaddr, 6));
     bluetooth->connect(bdaddr);
   }
   bluetooth->process();

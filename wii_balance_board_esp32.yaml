@@ -41,46 +41,36 @@ wii_balance_board:
   standard_deviation: 0.3
   led_pin: 2
   temperature_sensor:
-    name: "Balance Board Temperature"
+    name: "Balance board temperature"
   reference_temperature_sensor:
-    name: "Balance Board Reference Temperature"
+    name: "Balance board reference temperature"
   battery_level:
-    name: "Balance Board Battery Level"
+    name: "Balance board battery level"
   weight:
-    name: "Balance Board Weight"
+    name: "Balance board weight"
   syncing:
-    name: "Balance Board Syncing"
+    name: "Balance board syncing"
+  calibration_status:
+    name: "Balance board calibration status"
 
 button:
   - platform: template
-    name: "Start Sync"
+    name: "Start sync"
     on_press:
       then:
         - lambda: 'id(wbb)->sync(true);'
   - platform: template
-    name: "Capture Empty Board"
+    name: "Calibrate board"
     on_press:
       then:
-        - lambda: 'id(wbb)->capture_calibration_empty();'
-  - platform: template
-    name: "Start Loaded Calibration Capture"
-    on_press:
-      then:
-        - lambda: 'id(wbb)->capture_calibration_load();'
-  - platform: template
-    name: "Cancel Board Calibration"
-    on_press:
-      then:
-        - lambda: 'id(wbb)->cancel_calibration();'
+        - lambda: 'id(wbb)->calibration_button();'
 
-number:
+text:
   - platform: template
-    name: "Calibration Reference Weight"
-    unit_of_measurement: kg
-    min_value: 1
-    max_value: 200
-    step: 0.1
-    mode: box
+    name: "Reference weight (kg)"
+    mode: text
+    min_length: 1
+    max_length: 8
     optimistic: true
     set_action:
       then:

@@ -8,6 +8,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 
 #include <array>
+#include <string>
 #include "task_queue.h"
 #include <unordered_map>
 
@@ -36,10 +37,8 @@ class WiiBalanceBoard : public Component {
   void loop() override;
   void dump_config() override;
   void sync(bool enable);
-  void capture_calibration_empty();
-  void set_calibration_reference_weight(float weight_kg);
-  void capture_calibration_load();
-  void cancel_calibration();
+  void calibration_button();
+  void set_calibration_reference_weight(const std::string &weight);
 
   void set_temperature_sensor(sensor::Sensor *temperature_sensor);
   void set_reference_temperature_sensor(sensor::Sensor *reference_temperature_sensor);
@@ -51,7 +50,7 @@ class WiiBalanceBoard : public Component {
   void set_led_pin(int led_pin);
 
  protected:
-  enum class CalibrationStage : uint8_t { IDLE, CAPTURE_EMPTY, WAIT_FOR_LOAD, CAPTURE_LOAD };
+  enum class CalibrationStage : uint8_t { IDLE, WAIT_FOR_EMPTY, CAPTURE_EMPTY, WAIT_FOR_LOAD, CAPTURE_LOAD };
 
   struct CalibrationProfile {
     uint32_t magic;
@@ -64,6 +63,7 @@ class WiiBalanceBoard : public Component {
   void board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature, float topRightLoad,
                     float bottomRightLoad, float topLeftLoad, float bottomLeftLoad);
   void schedule_disconnect_(uint16_t handle, uint32_t generation, uint32_t delay_ms);
+  void refresh_calibration_timeout_();
   void reset_calibration_samples_();
   void process_calibration_sample_(float adjusted_weight);
   void set_calibration_status_(const char *status);

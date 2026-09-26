@@ -313,7 +313,7 @@ struct Bluetooth::Impl {
         if (!was_initialized) {
           readyListener(bluetooth);
         } else {
-          ESP_LOGI(TAG, "Page and inquiry scan re-enabled");
+          ESP_LOGD(TAG, "Page and inquiry scan re-enabled");
         }
       } else {
         ESP_LOGE(TAG, "write_scan_enable failed status=0x%02X", data[3]);
