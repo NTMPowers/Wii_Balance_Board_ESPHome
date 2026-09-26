@@ -308,8 +308,13 @@ struct Bluetooth::Impl {
       CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     } else if (data[1] == 0x1A && data[2] == 0x0C) {  // write_scan_enable
       if (data[3] == 0x00) {                          // OK
+        bool was_initialized = initialized;
         initialized = true;
-        readyListener(bluetooth);
+        if (!was_initialized) {
+          readyListener(bluetooth);
+        } else {
+          ESP_LOGD(TAG, "Page and inquiry scan re-enabled");
+        }
       } else {
         ESP_LOGE(TAG, "write_scan_enable failed.");
       }
@@ -395,14 +400,21 @@ struct Bluetooth::Impl {
           bluetooth,
           HCIConnectionFailed{
               .bdaddr = bdaddr, .handle = handle, .reason = status, .accepted = !connectRequests.contains(bdaddr)});
+      ESP_LOGW(TAG, "Connection complete failed status=0x%02X; re-enabling page scan", status);
+      CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     }
     connectRequests.erase(bdaddr);
   }
 
   void handleHCIConnectionRequest(uint8_t *data, size_t len) {
+    if (len < 10) {
+      ESP_LOGW(TAG, "Ignoring short HCI connection request (%u bytes)", static_cast<unsigned>(len));
+      return;
+    }
     uint64_t bdaddr = *(const uint64_t *) (data) &0xFFFFFFFFFFFFull;
     uint32_t cod = (data[6] << 16) | (data[7] << 8) | data[8];
     uint8_t link_type = data[9];
+    ESP_LOGD(TAG, "HCI connection request CoD=0x%06X link_type=0x%02X", static_cast<unsigned>(cod), link_type);
 
     if (connectionRequestListener(bluetooth, HCIConnectionRequest{.bdaddr = bdaddr, .classOfDevice = cod})) {
       ESP_LOGD(TAG, "Accepting connection from %s role=0x00 (become master)", formatHex((uint8_t *)&bdaddr, 6));

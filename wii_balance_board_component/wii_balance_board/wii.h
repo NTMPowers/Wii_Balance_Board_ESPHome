@@ -44,7 +44,7 @@ class Wii {
   std::unordered_set<uint16_t> initiatorHandles;
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
-  bool allowBoardPage{false};
+  uint32_t rejectBoardPagesUntil{0};
   std::function<void(const WiiEvent &)> eventListener;
 
  public:

@@ -51,7 +51,6 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
       return;
     }
     ESP_LOGI(TAG, "Scheduled disconnect.");
-    wii.disconnect(handle, 0x0011);
     wii.disconnect(handle, 0x0013);
   });
 }
@@ -147,6 +146,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
       // We have a valid sample, schedule board disconnect.
       ESP_LOGI(TAG, "Stable weight %.2f kg for handle=%u", mean, handle);
+      queue.reschedule(handle, millis() + 100);
     }
   }
 }

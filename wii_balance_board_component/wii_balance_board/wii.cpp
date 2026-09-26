@@ -1,5 +1,6 @@
 #include "wii.h"
 #include "log.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 #include "bluetooth.h"
@@ -251,12 +252,13 @@ class Wii::BalanceBoard {
 Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIConnectionRequest([this](Bluetooth *, const HCIConnectionRequest &result) {
     ESP_LOGI(TAG, "Received connection request from %s", formatHex((uint8_t *) &result.bdaddr, 6));
-    if (result.classOfDevice == 0x042500 && allowBoardPage) {
+    if (result.classOfDevice == 0x042500 && static_cast<int32_t>(millis() - rejectBoardPagesUntil) >= 0) {
       ESP_LOGI(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
     }
     if (result.classOfDevice == 0x042500) {
-      ESP_LOGI(TAG, "Rejecting board page; start sync to allow a connection");
+      ESP_LOGI(TAG, "Rejecting board page during disconnect cooldown (%u ms remain)",
+               static_cast<unsigned>(rejectBoardPagesUntil - millis()));
     }
     return false;  // Reject all other incoming connections
   });
@@ -264,10 +266,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
   bt->onHCIEvent([this](Bluetooth *bt, const HCIEvent &event) {
     std::visit(overloaded{
                    [this](const HCIInquiryStarted &) { this->eventListener(ScanStarted{}); },
-                   [this](const HCIInquiryComplete &) {
-                     allowBoardPage = false;
-                     this->eventListener(ScanStopped{});
-                   },
+                   [this](const HCIInquiryComplete &) { this->eventListener(ScanStopped{}); },
                    [bt](const HCIInquiryResult &result) {
                      if (result.classOfDevice == 0x042500) {
                        bt->requestRemoteName(result);
@@ -286,7 +285,8 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       [this](const HCIConnectionFailed &result) {
                         pendingReconnect.reset();
                         reconnecting = false;
-                        ESP_LOGE(TAG, "Failed to connect Wiimote %s", formatHex((uint8_t *) &result.bdaddr, 6));
+                        ESP_LOGE(TAG, "Failed to connect Wiimote %s reason=0x%02X",
+                                 formatHex((uint8_t *) &result.bdaddr, 6), result.reason);
                       },
                         [this](const HCIConnectionEstablished &result) {
                           ESP_LOGI(TAG, "Wiimote connection established, handle: %d", result.handle);
@@ -322,7 +322,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                     },
                            [this](const HCIDisconnected &result) {
                              ESP_LOGI(TAG, "Disconnected %d reason=0x%02X", result.handle, result.reason);
-                             allowBoardPage = false;
+                             rejectBoardPagesUntil = millis() + 5000;
                               pendingPSM13.erase(result.handle);
                               pendingEncryption.erase(result.handle);
                               initiatorHandles.erase(result.handle);
@@ -366,7 +366,6 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                    [this](const ACLConnectionFailed &) {},
                        [this](const ACLDisconnected &info) {
                           if (info.psm == 0x13) {
-                            allowBoardPage = false;
                              pendingPSM13.erase(info.handle);
                              pendingEncryption.erase(info.handle);
                            this->eventListener(BalanceBoardDisconnected{
@@ -411,10 +410,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
 
 Wii::~Wii() {}
 
-void Wii::sync(bool enable) {
-  allowBoardPage = enable;
-  bluetooth->scan(enable);
-}
+void Wii::sync(bool enable) { bluetooth->scan(enable); }
 
 void Wii::step() {
   if (pendingReconnect.has_value() && !reconnecting) {
@@ -431,6 +427,9 @@ void Wii::onEvent(std::function<void(const WiiEvent &)> eventListener) {
   this->eventListener = std::move(eventListener);
 }
 
-void Wii::disconnect(uint16_t handle, uint16_t psm) { bluetooth->l2cap_disconnect(handle, psm); }
+void Wii::disconnect(uint16_t handle, uint16_t psm) {
+  rejectBoardPagesUntil = millis() + 5000;
+  bluetooth->l2cap_disconnect(handle, psm);
+}
 
 }  // namespace esphome::wii_balance_board::detail
