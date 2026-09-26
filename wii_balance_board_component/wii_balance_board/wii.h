@@ -42,6 +42,7 @@ class Wii {
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
+  std::unordered_set<uint64_t> disconnectBoardPages;
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
   uint32_t rejectBoardPagesUntil{0};
