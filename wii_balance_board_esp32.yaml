@@ -15,7 +15,7 @@ esp32:
 
 # Enable logging
 logger:
-  level: DEBUG
+  level: VERBOSE
 
 # Local device dashboard
 web_server:
