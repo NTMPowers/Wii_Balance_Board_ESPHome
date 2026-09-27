@@ -7,6 +7,7 @@
 #include "wii.h"
 
 #include <array>
+#include <string>
 #include <unordered_map>
 #include "task_queue.h"
 
@@ -14,7 +15,7 @@ namespace esphome {
 namespace wii_balance_board {
 
 struct Sample {
-  float samples[64]{};
+  float samples[128]{};
   size_t sample_count{0};
   size_t samples_filled{0};
   uint8_t temperature{0};
@@ -38,6 +39,9 @@ class WiiBalanceBoard : public Component {
   void remove_link_key();
   void remove_all_link_keys();
 
+  // Set the calibration offset, in kg, for the currently connected board.
+  void set_offset(const std::string &value);
+
   void set_temperature_sensor(sensor::Sensor *temperature_sensor);
   void set_reference_temperature_sensor(sensor::Sensor *reference_temperature_sensor);
   void set_battery_level(sensor::Sensor *battery_level);
@@ -51,6 +55,9 @@ class WiiBalanceBoard : public Component {
   // Fires when a weighing is accepted, with the measured weight in kg.
   Trigger<float> *get_measurement_trigger() { return &this->measurement_trigger_; }
 
+  // Fires right after a board connects, with its saved offset in kg (0 if none saved).
+  Trigger<float> *get_offset_loaded_trigger() { return &this->offset_loaded_trigger_; }
+
  protected:
   void board_connected(uint16_t handle, uint64_t bdaddr);
   void board_disconnected(uint16_t handle);
@@ -60,6 +67,12 @@ class WiiBalanceBoard : public Component {
   void disconnect_active_board_();
   void schedule_disconnect_(uint16_t handle, uint32_t generation, uint32_t delay_ms);
   void set_ready_(bool ready);
+
+  // Per-board offset storage (NVS), keyed by bdaddr.
+  static bool load_offset_(uint64_t bdaddr, float *offset);
+  static void save_offset_(uint64_t bdaddr, float offset);
+  static bool remove_offset_(uint64_t bdaddr);
+  static int remove_all_offsets_();
 
   detail::Bluetooth bluetooth;
   detail::Wii wii;
@@ -77,6 +90,8 @@ class WiiBalanceBoard : public Component {
   bool active_board_{false};
   // Set once the board's 0 kg points and reference temperature have been rewritten.
   bool board_zeroed_{false};
+  // Calibration offset for the currently connected board, loaded from NVS on connect.
+  float active_offset_{0.0f};
 
   float std_dev_;
   int led_pin_ = -1;
@@ -89,6 +104,7 @@ class WiiBalanceBoard : public Component {
   binary_sensor::BinarySensor *syncing_{nullptr};
   binary_sensor::BinarySensor *ready_to_step_on_{nullptr};
   Trigger<float> measurement_trigger_;
+  Trigger<float> offset_loaded_trigger_;
 };
 
 }  // namespace wii_balance_board

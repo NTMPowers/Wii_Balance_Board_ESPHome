@@ -30,6 +30,14 @@ Once paired, the board reconnects automatically every time you press the A-butto
 
 - **Remove board** / **Remove all boards** forget the stored pairing(s).
 
+## Offset
+
+A per-board calibration offset, in kg, applied to the final measured weight.
+
+- Only works while a board is connected — the offset is saved for that specific board.
+- Accepts a plain number with either `.` or `,` as the decimal separator, e.g. `2.31`, `2,31`, or `-2.31`.
+- Saved automatically.
+
 ## Requirements
 
 1. A balance board
@@ -62,14 +70,26 @@ external_components:
       type: local
       path: ./wii_balance_board_component
     components: [ wii_balance_board ]
+    
+globals:
+  - id: loading_offset
+    type: bool
+    initial_value: 'false'
 
 wii_balance_board:
   id: wbb
-  standard_deviation: 0.3
   ready_to_step_on:
     name: "Ready to weigh"
   weight:
     name: "Weight"
+  on_offset_loaded:
+    then:
+      - lambda: |-
+          id(loading_offset) = true;
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%.2f", offset);
+          id(offset_text).publish_state(buf);
+          id(loading_offset) = false;
 
 button:
   - platform: template
@@ -87,6 +107,20 @@ button:
     on_press:
       then:
         - lambda: 'id(wbb)->remove_all_link_keys();'
+
+text:
+  - platform: template
+    id: offset_text
+    name: "Weight offset"
+    mode: text
+    optimistic: true
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(loading_offset);'
+            then:
+              - lambda: 'id(wbb)->set_offset(x);'
 ```
 
 Two complete example configs, both set up for a WEMOS LOLIN32 Lite:
@@ -98,7 +132,7 @@ Two complete example configs, both set up for a WEMOS LOLIN32 Lite:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `standard_deviation` | `0.4` | Maximum standard deviation, in kg, for a set of samples to count as a steady weight. Lower is stricter. |
+| `standard_deviation` | `0.2` | Maximum standard deviation, in kg, for a set of samples to count as a steady weight. Lower is stricter. |
 | `syncing` | `Syncing` | Binary sensor, on while scanning for a board. |
 | `ready_to_step_on` | `Ready to weigh` | Binary sensor, on once the board has been zeroed and it is safe to step on. |
 | `weight` | `Weight` | Measured weight. |
