@@ -28,6 +28,7 @@ CONF_TEMPERATURE = "temperature_sensor"
 CONF_REF_TEMPERATURE = "reference_temperature_sensor"
 CONF_STDDEV = "standard_deviation"
 CONF_LED_PIN = "led_pin"
+CONF_LED_INVERTED = "led_inverted"
 
 wii_balance_board_ns = cg.esphome_ns.namespace("wii_balance_board")
 WiiBalanceBoard = wii_balance_board_ns.class_("WiiBalanceBoard", cg.Component)
@@ -36,6 +37,7 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WiiBalanceBoard),
         cv.Optional(CONF_LED_PIN, default=-1): cv.int_,
+        cv.Optional(CONF_LED_INVERTED, default=False): cv.boolean,
         cv.Optional(
             CONF_TEMPERATURE,
             default={
@@ -135,6 +137,7 @@ async def to_code(config):
     # is not None rather than a truth test: GPIO 0 and a 0.0 stddev are both valid.
     if (led_pin := config.get(CONF_LED_PIN)) is not None:
         cg.add(var.set_led_pin(led_pin))
+    cg.add(var.set_led_inverted(config.get(CONF_LED_INVERTED)))
 
     if (stddev := config.get(CONF_STDDEV)) is not None:
         cg.add(var.set_stddev(stddev))

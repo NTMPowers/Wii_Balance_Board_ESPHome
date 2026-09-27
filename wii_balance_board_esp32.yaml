@@ -46,6 +46,7 @@ wii_balance_board:
   id: wbb
   standard_deviation: 0.3
   led_pin: 22
+  led_inverted: true
   temperature_sensor:
     name: "Temperature"
     web_server:

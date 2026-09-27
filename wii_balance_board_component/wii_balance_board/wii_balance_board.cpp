@@ -37,7 +37,8 @@ void WiiBalanceBoard::set_ready_(bool ready) {
   }
   // The on-board LED is lit only while it is safe to step on.
   if (led_pin_ >= 0) {
-    digitalWrite(led_pin_, ready ? HIGH : LOW);
+    const bool lit = ready != led_inverted_;
+    digitalWrite(led_pin_, lit ? HIGH : LOW);
   }
 }
 
@@ -291,6 +292,7 @@ void WiiBalanceBoard::set_battery_level(sensor::Sensor *battery_level) { battery
 void WiiBalanceBoard::set_weight(sensor::Sensor *weight) { weight_ = weight; }
 void WiiBalanceBoard::set_stddev(float stddev) { this->std_dev_ = stddev; }
 void WiiBalanceBoard::set_led_pin(int led_pin) { this->led_pin_ = led_pin; }
+void WiiBalanceBoard::set_led_inverted(bool inverted) { this->led_inverted_ = inverted; }
 void WiiBalanceBoard::set_syncing(binary_sensor::BinarySensor *syncing) { this->syncing_ = syncing; }
 void WiiBalanceBoard::set_ready_to_step_on(binary_sensor::BinarySensor *ready) { this->ready_to_step_on_ = ready; }
 

@@ -45,6 +45,7 @@ class WiiBalanceBoard : public Component {
   void set_ready_to_step_on(binary_sensor::BinarySensor *ready);
   void set_stddev(float stddev);
   void set_led_pin(int led_pin);
+  void set_led_inverted(bool inverted);
 
  protected:
   void board_connected(uint16_t handle, uint64_t bdaddr);
@@ -74,7 +75,8 @@ class WiiBalanceBoard : public Component {
   bool board_zeroed_{false};
 
   float std_dev_;
-  int led_pin_;
+  int led_pin_ = -1;
+  bool led_inverted_ = false;
 
   sensor::Sensor *temperature_sensor_{nullptr};
   sensor::Sensor *reference_temperature_sensor_{nullptr};
