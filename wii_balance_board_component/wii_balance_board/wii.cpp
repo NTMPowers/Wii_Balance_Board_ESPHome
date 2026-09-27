@@ -299,19 +299,25 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       }
                     },
                      [this](const HCIRoleChanged &result) {
-                       // The settled link role decides what happens next: when the board ends up
-                       // master it never opens L2CAP itself and we only wait for it (see
-                       // HCIEncryptionChange), so losing the accept-time role race strands the
-                       // session until the board drops the link.
-                       if (result.status == 0x00 && result.newRole == 0x00) {
+                       // The board only initiates L2CAP while it is the link slave, so the settled
+                       // role decides whether the session can proceed at all. We ask for master when
+                       // accepting, but the board can fire a role switch of its own at the same
+                       // instant: two simultaneous LMP transactions collide and we come out slave,
+                       // leaving the board master and waiting for channels we never open.
+                       // Auth and encryption still succeed on that link, so record the collision and
+                       // force the role once the link is fully up (see HCIEncryptionChange).
+                       if (result.status != 0x00) {
+                         needsRoleSwitch.emplace(result.bdaddr);
+                         ESP_LOGD(TAG, "Role switch failed status=0x%02X for %s, will force master once encrypted",
+                                  result.status, formatHex((uint8_t *) &result.bdaddr, 6));
+                       } else if (result.newRole == 0x00) {
+                         needsRoleSwitch.erase(result.bdaddr);
                          ESP_LOGD(TAG, "Link role settled: host is MASTER for %s, board will open L2CAP",
                                   formatHex((uint8_t *) &result.bdaddr, 6));
-                       } else if (result.status == 0x00) {
+                       } else {
+                         needsRoleSwitch.erase(result.bdaddr);
                          ESP_LOGD(TAG, "Link role settled: host is SLAVE for %s, board will not open L2CAP",
                                   formatHex((uint8_t *) &result.bdaddr, 6));
-                       } else {
-                         ESP_LOGD(TAG, "Role switch failed status=0x%02X for %s, host stays SLAVE, board will not open L2CAP",
-                                  result.status, formatHex((uint8_t *) &result.bdaddr, 6));
                        }
                      },
                       [this](const HCIConnectionFailed &result) {
@@ -362,6 +368,10 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                              pendingPSM13.erase(result.handle);
                              pendingEncryption.erase(result.handle);
                              initiatorHandles.erase(result.handle);
+                             auto gone = handleToBdaddr.find(result.handle);
+                             if (gone != handleToBdaddr.end()) {
+                               needsRoleSwitch.erase(gone->second);
+                             }
                              handleToBdaddr.erase(result.handle);
                              // The Bluetooth link is now definitively gone (this is the only ground-truth
                              // signal for that, matching how a Linux host determines "disconnected"). Only
@@ -386,7 +396,24 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                                 pendingPSM13.emplace(result.handle);
                                 bluetooth->l2cap_connect(result.handle, 0x0011, 0x40);
                               } else {
-                                ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X, waiting for board to open L2CAP", result.handle);
+                                // The board paged us, so it is the L2CAP client and only opens the
+                                // channels once it is the link slave. If the accept-time role switch
+                                // collided we are master-and-waiting, which strands the session until
+                                // the board drops the link a couple of seconds later. Encryption is
+                                // the right moment to retry: the board's own switch attempt finished
+                                // long ago, so the retry cannot collide again, and there is still
+                                // roughly 1.4s of the board's patience left.
+                                auto it = handleToBdaddr.find(result.handle);
+                                uint64_t bdaddr = it != handleToBdaddr.end() ? it->second : 0;
+                                if (bdaddr != 0 && needsRoleSwitch.erase(bdaddr) > 0) {
+                                  ESP_LOGD(TAG,
+                                           "Encryption enabled for handle=0x%04X, forcing master for %s after role switch collision",
+                                           result.handle, formatHex((uint8_t *) &bdaddr, 6));
+                                  bluetooth->switch_role(bdaddr);
+                                } else {
+                                  ESP_LOGD(TAG, "Encryption enabled for handle=0x%04X, waiting for board to open L2CAP",
+                                           result.handle);
+                                }
                               }
                             } else if (result.status != 0x00) {
                               pendingEncryption.erase(result.handle);

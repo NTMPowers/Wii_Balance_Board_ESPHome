@@ -42,6 +42,10 @@ class Wii {
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
+  // Boards whose accept-time role switch lost its LMP race. The board only opens L2CAP
+  // while it is the link slave, so an unresolved collision leaves it master and waiting
+  // for channels we never open. Consumed at encryption time to force the role.
+  std::unordered_set<uint64_t> needsRoleSwitch;
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
   uint64_t rejectBoardUntil_{0};
