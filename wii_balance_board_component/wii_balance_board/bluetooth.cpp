@@ -191,7 +191,12 @@ struct Bluetooth::Impl {
       }
     }
 
-    if (auto rxData = rxBuffer.read(0)) {
+    // Drain every queued RX packet per tick (not just one): our disconnect
+    // handshake uses wall-clock retry timers, so leaving confirmations
+    // sitting unread behind other traffic can make a graceful disconnect
+    // time out and escalate to an abrupt one even though the peer already
+    // replied.
+    while (auto rxData = rxBuffer.read(0)) {
       const char *type;
       uint8_t typeColor;
       switch (rxData[0]) {
@@ -671,6 +676,7 @@ struct Bluetooth::Impl {
     }
     ESP_LOGD(TAG, "Sending disconnect response");
     if (connection->remoteCid == sourceCid) {
+      uint16_t psm = connection->psm;
       uint8_t response[] = {
           0x07,        // Disconnect response
           identifier,  // Identifier
@@ -684,6 +690,11 @@ struct Bluetooth::Impl {
 
       sendL2DataChannel(handle, 0x0001, response, 8);
       connections.remove(*connection);
+      // The board is allowed to close a channel on its own (e.g. its own idle
+      // power-off timer); tell the app layer the same way we would for a
+      // response to our own disconnect request, so it can finish tearing
+      // down rather than leaving a stale ACL link and app-level state.
+      aclListener(bluetooth, ACLDisconnected{.handle = handle, .psm = psm});
     } else {
       ESP_LOGD(TAG, "Mismatch");
     }
@@ -891,7 +902,7 @@ struct Bluetooth::Impl {
     sendL2DataChannel(handle, connection->remoteCid, data, len);
   }
 
-  void sendL2Disconnect(uint16_t handle, uint16_t psm) {
+  bool sendL2Disconnect(uint16_t handle, uint16_t psm) {
     auto *connection = connections.findPsm(handle, psm);
     if (connection) {
       uint8_t data[] = {
@@ -906,7 +917,10 @@ struct Bluetooth::Impl {
       };
 
       sendL2DataChannel(handle, 0x0001, data, 8);
+      return true;
     }
+    ESP_LOGD(TAG, "No L2CAP channel handle=%u psm=0x%04X to disconnect; already closed", handle, psm);
+    return false;
   }
 
   void sendL2DataChannel(uint16_t handle, uint16_t channelId, uint8_t *data, size_t len) {
@@ -1006,7 +1020,7 @@ void Bluetooth::onACLConnectionRequest(const std::function<bool(Bluetooth *, con
   m_impl->aclConnectionRequestListener = listener;
 }
 
-void Bluetooth::l2cap_disconnect(uint16_t handle, uint16_t psm) { m_impl->sendL2Disconnect(handle, psm); }
+bool Bluetooth::l2cap_disconnect(uint16_t handle, uint16_t psm) { return m_impl->sendL2Disconnect(handle, psm); }
 
 void Bluetooth::l2send_data(uint16_t handle, uint16_t psm, uint8_t *data, size_t len) {
   m_impl->sendL2Data(handle, psm, data, len);

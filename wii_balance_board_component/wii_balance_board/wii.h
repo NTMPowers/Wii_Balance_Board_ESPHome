@@ -36,30 +36,14 @@ using WiiEvent =
 
 class Wii {
   struct BalanceBoard;
-  struct PendingL2CAPDisconnect {
-    uint16_t handle;
-    uint16_t psm;
-    uint8_t attempts;
-    uint32_t retry_at;
-  };
-  struct PendingHCIDisconnect {
-    uint16_t handle;
-    uint8_t attempts;
-    uint32_t retry_at;
-  };
   Bluetooth *bluetooth;
   std::unordered_map<uint16_t, std::unique_ptr<BalanceBoard>> connectedBoards;
   std::unordered_map<uint16_t, uint64_t> handleToBdaddr;
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
-  std::unordered_set<uint16_t> cooldownDisconnectHandles;
-  std::unordered_set<uint64_t> disconnectBoardPages;
   std::optional<uint64_t> pendingReconnect;
-  std::optional<PendingL2CAPDisconnect> pendingL2CAPDisconnect;
-  std::optional<PendingHCIDisconnect> pendingHCIDisconnect;
   bool reconnecting{false};
-  uint32_t rejectBoardPagesUntil{0};
   std::function<void(const WiiEvent &)> eventListener;
 
  public:
@@ -72,13 +56,17 @@ class Wii {
   void sync(bool enable);
   void step();
 
-  void disconnect(uint16_t handle, uint16_t psm);
+  // Directly tears down the Bluetooth link (HCI disconnect), exactly like
+  // `bluetoothctl disconnect <address>`. This is deliberately a single,
+  // unconditional command: no staged per-channel L2CAP handshake, no
+  // retries, no cooldown. The board is only considered disconnected once
+  // the controller confirms the link is actually gone (HCIDisconnected),
+  // never earlier.
+  void disconnect(uint16_t handle);
 
  protected:
-  void startL2CAPDisconnect_(uint16_t handle, uint16_t psm);
-  void sendL2CAPDisconnectAttempt_();
-  void startHCIDisconnect_(uint16_t handle);
-  void processDisconnectRetries_();
+  void onACLChannelClosedUnexpectedly_(uint16_t handle, uint16_t psm);
+  void handleBoardGone_(uint16_t handle);
 };
 
 }  // namespace esphome::wii_balance_board::detail

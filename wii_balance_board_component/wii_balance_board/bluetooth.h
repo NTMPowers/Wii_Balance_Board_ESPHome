@@ -144,7 +144,7 @@ class Bluetooth {
   void onACLEvent(const std::function<void(Bluetooth *, const ACLEvent &)> &acl);
   void onACLConnectionRequest(const std::function<bool(Bluetooth *, const ACLConnectionRequest &)> &listener);
   void l2cap_connect(uint16_t handle, uint16_t psm, uint16_t mtu);
-  void l2cap_disconnect(uint16_t handle, uint16_t psm);
+  bool l2cap_disconnect(uint16_t handle, uint16_t psm);
   void l2send_data(uint16_t handle, uint16_t psm, uint8_t *data, size_t len);
 };
 

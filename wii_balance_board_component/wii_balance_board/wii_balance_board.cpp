@@ -93,7 +93,7 @@ void WiiBalanceBoard::schedule_disconnect_(uint16_t handle, uint32_t generation,
         ESP_LOGI(TAG, "Timeout reached. Disconnecting board.");
       }
     }
-    wii.disconnect(handle, 0x0013);
+    wii.disconnect(handle);
   });
 }
 
