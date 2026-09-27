@@ -16,9 +16,8 @@ struct BalanceBoardDisconnected {
   uint16_t handle;
 };
 
-// The board's own zero point has been rewritten from an empty-board average, so the
-// reading is now trustworthy. Only publish a measurement once this arrives, otherwise
-// the user would be weighing against a stale/phantom zero.
+// The board's 0 kg points and reference temperature have been rewritten. Measurements
+// are only meaningful once this arrives.
 struct BalanceBoardTared {
   uint16_t handle;
   bool ok;
@@ -50,9 +49,8 @@ class Wii {
   std::unordered_set<uint16_t> pendingPSM13;
   std::unordered_set<uint16_t> pendingEncryption;
   std::unordered_set<uint16_t> initiatorHandles;
-  // Boards whose accept-time role switch lost its LMP race. The board only opens L2CAP
-  // while it is the link slave, so an unresolved collision leaves it master and waiting
-  // for channels we never open. Consumed at encryption time to force the role.
+  // Boards whose accept-time role switch lost its LMP race. The board only opens
+  // L2CAP as link slave, so the role is forced at encryption time.
   std::unordered_set<uint64_t> needsRoleSwitch;
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
@@ -69,14 +67,9 @@ class Wii {
   void sync(bool enable);
   void step();
 
-  // Directly tears down the Bluetooth link (HCI disconnect), exactly like
-  // `bluetoothctl disconnect <address>`. This is deliberately a single,
-  // unconditional command: no staged per-channel L2CAP handshake, no
-  // retries. The board is only considered disconnected once the
-  // controller confirms the link is actually gone (HCIDisconnected),
-  // never earlier. A short post-disconnect reconnect cooldown is applied
-  // separately (see rejectBoardUntil_) to stop the board's own immediate
-  // re-page from being accepted.
+  // Single unconditional HCI disconnect. The board is only treated as disconnected
+  // once the controller confirms the link is gone (HCIDisconnected). Rejecting an
+  // immediate re-page is handled by rejectBoardUntil_.
   void disconnect(uint16_t handle);
 
  protected:

@@ -45,20 +45,17 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
     return;
   }
 
-  // Drop any stale disconnect task for a previous connection with this handle
-  // (handles get reused on quick reconnects), then queue sampling state.
+  // Drop a stale disconnect task for a previous connection on this handle.
   queue.cancel(handle);
 
   Sample sample;
   active_handle_ = handle;
   active_bdaddr_ = bdaddr;
   active_board_ = true;
-  // The board has to zero itself before any reading means anything, so hold off
-  // until the driver reports it is safe to step on.
   board_zeroed_ = false;
   set_ready_(false);
   sampleMap.emplace(handle, sample);
-  ESP_LOGD(TAG, "Board connected, zeroing it before it can be weighed on");
+  ESP_LOGI(TAG, "Zeroing board");
 
   // Schedule timeout disconnect; guarded by session generation so a task from
   // a dead session cannot fire on a new connection reusing the same handle.
@@ -92,6 +89,7 @@ void WiiBalanceBoard::board_tared(uint16_t handle, bool ok) {
   }
   board_zeroed_ = true;
   set_ready_(true);
+  ESP_LOGI(TAG, "Ready to weigh");
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {
@@ -140,8 +138,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     return;
   }
 
-  // Nothing measured against a stale zero: the board has not finished averaging
-  // its own empty reading yet.
+  // No measurement until the board has been zeroed.
   if (!board_zeroed_) {
     return;
   }
@@ -150,10 +147,9 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   sample.battery = battery;
   sample.temperature = temperature;
 
-  // The board's own reading, straight from its 0/17/34 kg calibration points,
-  // temperature compensated against the reference temperature captured when the
-  // board was zeroed. No software tare or scale is applied on top: the zero is
-  // fixed in the board's own calibration, once per connection.
+  // Sum the four cells, each already interpolated against the board's own 0/17/34 kg
+  // points, then apply its temperature correction against the reference temperature
+  // captured when the board was zeroed.
   float totalWeight = (topRightLoad + bottomRightLoad + topLeftLoad + bottomLeftLoad) / 1000;
   float weight = (.999 * totalWeight * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
 

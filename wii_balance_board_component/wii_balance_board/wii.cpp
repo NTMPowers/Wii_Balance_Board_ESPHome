@@ -13,12 +13,8 @@
 
 static const char *TAG = "wii";
 
-// After we disconnect the board, briefly reject any immediate re-page from it. The board
-// itself re-pages within a few seconds of a clean disconnect while a user is still standing
-// on it (observed on hardware); rejecting a paired device is safe since it is always still
-// trusted and can page again once the cooldown lapses. Any re-page attempt seen during the
-// cooldown restarts the window, matching the requested behavior of blocking reconnects for
-// 10s after each attempt, not just after the original disconnect.
+// Reject a re-page from the board for this long after we disconnect, restarted by any
+// further attempt inside the window.
 static constexpr uint64_t BOARD_RECONNECT_COOLDOWN_MS = 10000;
 
 namespace esphome::wii_balance_board::detail {
@@ -32,32 +28,17 @@ class Wii::BalanceBoard {
   uint8_t referenceTemperature{0};
   bool lastAButtonPressed{false};
 
-  // ---------------------------------------------------------------------
-  // Hardware zeroing.
-  //
-  // The board stores its own 0 kg calibration points in EEPROM at 0xA40024 and
-  // guards them with a CRC32 at 0xA4003C. Nintendo's own software re-zeroes the
-  // board by averaging the raw sensors with nothing on it and writing that
-  // average back as the new 0 kg point, together with the current temperature
-  // as the new reference temperature (WiiBrew "Wii Balance Board", 7.3.3).
-  //
-  // That matters here because the board's zero point drifts with temperature and
-  // the scale is battery powered: it powers down after every weighing, so the
-  // zero it boots with is never the zero from the last session. Re-zeroing per
-  // connection is the only way to get a trustworthy zero.
-  // ---------------------------------------------------------------------
+  // The board holds its 0/17/34 kg calibration points and a reference temperature in
+  // EEPROM. COLLECTING averages the raw sensors over TARE_WINDOW_MS, the result becomes
+  // the new 0 kg points, and the temperature read during that window becomes the new
+  // reference temperature.
   enum class TareStage : uint8_t { IDLE, COLLECTING, WRITE_ZERO, WRITE_TEMP, VERIFY_ZERO, VERIFY_TEMP };
 
-  // Nintendo's manual samples the empty board for ~2 s.
   static constexpr uint32_t TARE_WINDOW_MS = 2000;
   static constexpr uint8_t TARE_MAX_ATTEMPTS = 3;
-  // A person stepping on moves a sensor by hundreds of counts; an empty board
-  // wobbles by a few. Anything above this means the window was disturbed.
+  // Per-sensor count range over the window that still counts as an undisturbed board.
   static constexpr uint16_t TARE_MAX_SPREAD = 200;
-  // The board reads a phantom of roughly 1-3 kg when empty, so a small non-zero
-  // total is expected and fine. A real person is >= 20 kg, so this cleanly
-  // separates "empty" from "somebody is already standing on it" - the one case
-  // where zeroing would silently destroy the calibration.
+  // Total weight above which the board is carrying something and must not be zeroed.
   static constexpr float TARE_MAX_LOAD_KG = 5.0f;
 
   TareStage tareStage{TareStage::IDLE};
@@ -162,10 +143,8 @@ class Wii::BalanceBoard {
   BalanceBoard(Bluetooth *bt, uint16_t handle, std::function<void(uint16_t, bool)> onTared)
       : bt(bt), queryState(0), handle(handle), onTared_(std::move(onTared)) {}
 
-  // The averaging window is normally closed by the arrival of a report, but if the
-  // board never starts streaming there is nothing to arrive and we would sit here
-  // until the app's session timeout with no explanation. Checked from step() so
-  // that failure is reported as what it is.
+  // The window is normally closed by the arrival of a report. A board that never
+  // streams one would otherwise be reported as a session timeout.
   void tick() {
     if (tareStage != TareStage::COLLECTING) {
       return;
@@ -390,8 +369,7 @@ class Wii::BalanceBoard {
         }
         std::memcpy(crcStored, data + 7, 4);
 
-        // Log the whole factory block. It is the only record of the board's
-        // original calibration, so it is what a manual restore would need.
+        // Log the factory block so the original calibration can be restored by hand.
         ESP_LOGD(TAG,
                  "Factory block 0x20=%02X%02X 0kg=%02X%02X %02X%02X %02X%02X %02X%02X 17kg=%02X%02X %02X%02X %02X%02X "
                  "%02X%02X 34kg=%02X%02X %02X%02X %02X%02X %02X%02X 0x60=%02X%02X 0x3C=%02X%02X%02X%02X",
@@ -405,20 +383,14 @@ class Wii::BalanceBoard {
                  static_cast<unsigned>(calibration[2]), static_cast<unsigned>(calibration[3]),
                  static_cast<unsigned>(referenceTemperature));
 
-        // WiiBrew documents a CRC32 (reversed polynomial 0xEDB88320) over the 24
-        // calibration bytes, then 0x20/0x21, then 0x60/0x61. Measured against this
-        // board's factory block, no such CRC32 reproduces the stored value in
-        // either byte order, nor does the CRC over any other range of bytes we can
-        // read. So the board is evidently not validating that word against the
-        // calibration points, and there is no way for us to regenerate it
-        // correctly. Leave it untouched rather than write a guess: the block stays
-        // exactly as the factory shipped it apart from the zero we are changing.
+        // 0xA4003C is left as the factory set it. No CRC32 over this block
+        // reproduces the stored value in either byte order, so there is no correct
+        // value to write back.
         ESP_LOGD(TAG, "Leaving the block checksum %02X%02X%02X%02X at 0xA4003C as the factory set it",
                  crcStored[0], crcStored[1], crcStored[2], crcStored[3]);
 
-        // Start the report stream. The board only streams weight reports once it
-        // has been told which mode to use, so this has to happen before the
-        // averaging window or nothing arrives to average.
+        // The board only streams weight reports once it has been told which mode
+        // to use, so this must precede the averaging window.
         set_reporting_mode(handle, 0x34, true);
         tareAttempt = 0;
         tareStage = TareStage::COLLECTING;
@@ -508,8 +480,7 @@ class Wii::BalanceBoard {
         }
         uint8_t *mem = data + 4;
 
-        // While zeroing, the reports are the input to the average rather than a
-        // measurement: the user must not be standing on the board yet.
+        // While zeroing, reports feed the average instead of producing a measurement.
         if (tareStage == TareStage::COLLECTING) {
           tareAccumulate_(mem);
           if (static_cast<uint32_t>(millis() - tareWindowStartMs) >= TARE_WINDOW_MS && tareFinalize_()) {
@@ -580,14 +551,11 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       }
                     },
                      [this](const HCIRoleChanged &result) {
-                       // The board only initiates L2CAP while it is the link slave, so the settled
-                       // role decides whether the session can proceed at all. We ask for master when
-                       // accepting, but the board can fire a role switch of its own at the same
-                       // instant: two simultaneous LMP transactions collide and we come out slave,
-                       // leaving the board master and waiting for channels we never open.
-                       // Auth and encryption still succeed on that link, so record the collision and
-                       // force the role once the link is fully up (see HCIEncryptionChange).
-                       if (result.status != 0x00) {
+                        // The board only initiates L2CAP while it is the link slave, so a
+                        // settled slave role strands the session. A switch requested here
+                        // can collide with the board's own LMP transaction and fail, so
+                        // record it and force master once encryption completes.
+                        if (result.status != 0x00) {
                          needsRoleSwitch.emplace(result.bdaddr);
                          ESP_LOGD(TAG, "Role switch failed status=0x%02X for %s, will force master once encrypted",
                                   result.status, formatHex((uint8_t *) &result.bdaddr, 6));
@@ -619,16 +587,14 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                          reconnecting = false;
                          handleToBdaddr[result.handle] = result.bdaddr;
 
-                         // The board refuses host-initiated L2CAP when it is the connection master
-                         // (i.e. it paged us, as on reconnect); only self-initiate L2CAP when we
-                         // were the one who paged the board (master), matching pairing behavior.
+                         // The board refuses host-initiated L2CAP when it is connection
+                         // master, as on a reconnect where it paged us.
                          if (!result.accepted) {
                            initiatorHandles.emplace(result.handle);
                          }
 
-                         // Do not open L2CAP before auth/encryption: newer boards power off if the
-                         // data pipe (PSM 0x0013) is opened pre-auth. L2CAP is opened later, from
-                         // HCIEncryptionChange, once the link is authenticated and encrypted.
+                         // Newer boards power off if PSM 0x0013 is opened pre-auth, so L2CAP
+                         // is deferred to HCIEncryptionChange.
                          bluetooth->auth(result.handle);
                       },
                     [bt](const HCILinkKeyRequest &result) {
@@ -654,10 +620,8 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                                needsRoleSwitch.erase(gone->second);
                              }
                              handleToBdaddr.erase(result.handle);
-                             // The Bluetooth link is now definitively gone (this is the only ground-truth
-                             // signal for that, matching how a Linux host determines "disconnected"). Only
-                             // now do we tell the app layer the board is disconnected, never earlier from
-                             // an intermediate L2CAP-level event, so our belief always matches reality.
+                             // HCIDisconnected is the only authoritative end-of-link
+                             // signal, so report the board gone from here alone.
                              handleBoardGone_(result.handle);
                           },
                            [this](const HCIAuthComplete &result) {
@@ -677,13 +641,8 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                                 pendingPSM13.emplace(result.handle);
                                 bluetooth->l2cap_connect(result.handle, 0x0011, 0x40);
                               } else {
-                                // The board paged us, so it is the L2CAP client and only opens the
-                                // channels once it is the link slave. If the accept-time role switch
-                                // collided we are master-and-waiting, which strands the session until
-                                // the board drops the link a couple of seconds later. Encryption is
-                                // the right moment to retry: the board's own switch attempt finished
-                                // long ago, so the retry cannot collide again, and there is still
-                                // roughly 1.4s of the board's patience left.
+                                // Encryption is late enough that the board's own switch
+                                // attempt has finished, so this retry cannot collide.
                                 auto it = handleToBdaddr.find(result.handle);
                                 uint64_t bdaddr = it != handleToBdaddr.end() ? it->second : 0;
                                 if (bdaddr != 0 && needsRoleSwitch.erase(bdaddr) > 0) {
@@ -772,12 +731,9 @@ void Wii::onEvent(std::function<void(const WiiEvent &)> eventListener) {
 }
 
 void Wii::disconnect(uint16_t handle) {
-  // Exactly what `bluetoothctl disconnect <address>` does: a single, unconditional
-  // HCI disconnect of the link. No staged per-channel L2CAP handshake, no retries.
-  // The controller tears down any open L2CAP channels as part of this; we don't
-  // need (and must not rely on) their own disconnect confirmations first, since
-  // any intermediate half-torn-down state is exactly what let the board believe
-  // the link had merely dropped and try to re-establish it.
+  // A single unconditional HCI disconnect. The controller tears down the L2CAP
+  // channels itself; waiting on their own close notifications would leave the
+  // board able to treat a half-torn-down link as merely dropped.
   ESP_LOGD(TAG, "Disconnecting board handle=%u", handle);
   bluetooth->disconnect(handle);
 }
@@ -790,12 +746,8 @@ void Wii::handleBoardGone_(uint16_t handle) {
 }
 
 void Wii::onACLChannelClosedUnexpectedly_(uint16_t handle, uint16_t psm) {
-  // The board never initiates a disconnect on its own; the only path to end a
-  // session is us issuing disconnect() below. Seeing an L2CAP channel close
-  // without us having asked for it is therefore abnormal (e.g. a radio glitch).
-  // Bring the link fully down rather than leaving it in a half-open state,
-  // which is exactly the kind of ambiguity that let the board think the link
-  // had merely dropped and try to reconnect on its own.
+  // The board never asks to disconnect, so a channel closing here means the link
+  // is in an indeterminate state. Tear it down fully.
   ESP_LOGW(TAG, "L2CAP channel psm=0x%04X closed unexpectedly for handle=%u; forcing full disconnect", psm, handle);
   bluetooth->disconnect(handle);
 }

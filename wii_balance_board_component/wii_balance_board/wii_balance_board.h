@@ -55,20 +55,16 @@ class WiiBalanceBoard : public Component {
   std::unordered_map<uint16_t, Sample> sampleMap;
   detail::TaskQueue queue;
   uint32_t last_low_weight_log_ms_{0};
-  // Session generation: incremented on every board_connected. Disconnect
-  // tasks capture the generation at scheduling time and are discarded when it
-  // is stale, so a timer from a dead session can never kill a fresh one
-  // (connection handles are reused by the controller).
+  // Disconnect tasks capture the generation at scheduling time and are discarded when
+  // stale, so a timer from a dead session cannot kill a fresh one (the controller
+  // reuses connection handles).
   uint32_t sessionGeneration{0};
 
   uint16_t active_handle_{0};
   uint64_t active_bdaddr_{0};
   uint32_t active_generation_{0};
   bool active_board_{false};
-  // The board is zeroed from an empty-board average at the start of every
-  // connection, so the weight is always the board's own reading with no software
-  // correction on top. Until that finishes the board is still reading against a
-  // stale zero, so nothing is measured or published.
+  // Set once the board's 0 kg points and reference temperature have been rewritten.
   bool board_zeroed_{false};
 
   float std_dev_;
