@@ -44,6 +44,7 @@ class Wii {
   std::unordered_set<uint16_t> initiatorHandles;
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
+  uint64_t rejectBoardUntil_{0};
   std::function<void(const WiiEvent &)> eventListener;
 
  public:
@@ -59,9 +60,11 @@ class Wii {
   // Directly tears down the Bluetooth link (HCI disconnect), exactly like
   // `bluetoothctl disconnect <address>`. This is deliberately a single,
   // unconditional command: no staged per-channel L2CAP handshake, no
-  // retries, no cooldown. The board is only considered disconnected once
-  // the controller confirms the link is actually gone (HCIDisconnected),
-  // never earlier.
+  // retries. The board is only considered disconnected once the
+  // controller confirms the link is actually gone (HCIDisconnected),
+  // never earlier. A short post-disconnect reconnect cooldown is applied
+  // separately (see rejectBoardUntil_) to stop the board's own immediate
+  // re-page from being accepted.
   void disconnect(uint16_t handle);
 
  protected:

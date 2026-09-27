@@ -12,6 +12,14 @@
 
 static const char *TAG = "wii";
 
+// After we disconnect the board, briefly reject any immediate re-page from it. The board
+// itself re-pages within a few seconds of a clean disconnect while a user is still standing
+// on it (observed on hardware); rejecting a paired device is safe since it is always still
+// trusted and can page again once the cooldown lapses. Any re-page attempt seen during the
+// cooldown restarts the window, matching the requested behavior of blocking reconnects for
+// 10s after each attempt, not just after the original disconnect.
+static constexpr uint64_t BOARD_RECONNECT_COOLDOWN_MS = 10000;
+
 namespace esphome::wii_balance_board::detail {
 
 class Wii::BalanceBoard {
@@ -262,10 +270,13 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
     ESP_LOGD(TAG, "Received connection request at %lu ms from %s", static_cast<unsigned long>(millis()),
              formatHex((uint8_t *) &result.bdaddr, 6));
     if (result.classOfDevice == 0x042500) {
-      // No artificial cooldown here: same as a Linux host, a paired board is always
-      // allowed to page us back. What must be reliable instead is the disconnect
-      // handshake itself, so the board never mistakes an intentional disconnect for
-      // a dropped link and starts retrying on its own.
+      uint64_t now = millis();
+      if (now < rejectBoardUntil_) {
+        ESP_LOGD(TAG, "Rejecting board reconnect during post-disconnect cooldown (%lu ms left)",
+                 static_cast<unsigned long>(rejectBoardUntil_ - now));
+        rejectBoardUntil_ = now + BOARD_RECONNECT_COOLDOWN_MS;  // restart the cooldown window
+        return false;
+      }
       ESP_LOGD(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
     }
@@ -447,6 +458,7 @@ void Wii::disconnect(uint16_t handle) {
 
 void Wii::handleBoardGone_(uint16_t handle) {
   if (connectedBoards.erase(handle) > 0) {
+    rejectBoardUntil_ = millis() + BOARD_RECONNECT_COOLDOWN_MS;
     this->eventListener(BalanceBoardDisconnected{.handle = handle});
   }
 }
