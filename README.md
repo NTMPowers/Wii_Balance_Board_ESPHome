@@ -24,7 +24,7 @@ For how the Bluetooth link and calibration actually work under the hood, see
 A board must be paired before it will connect.
 
 1. Press **Start sync**. This opens a 60-second pairing window.
-2. Step on the new board within that window and complete the PIN prompt.
+2. Press the red paring button on the new board within that window.
 
 Once paired, the board reconnects automatically every time you press the A-button.
 
