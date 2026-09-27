@@ -103,10 +103,7 @@ board from immediately re-connecting before it has been stepped off.
 
 1. A balance board
 2. A home assistant setup
-3. An ESP32 device with support for BR/EDR, powered from mains.
-
-Wi-Fi power save is left off and the Bluetooth controller's modem sleep is disabled, so the
-radio is always listening for a page from the board.
+3. An ESP32 device with support for BR/EDR.
 
 ## Sample Configuration
 
