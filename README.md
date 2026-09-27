@@ -30,6 +30,14 @@ Once paired, the board reconnects automatically every time you press the A-butto
 
 - **Remove board** / **Remove all boards** forget the stored pairing(s).
 
+## Offset
+
+A per-board calibration offset, in kg, applied to the final measured weight.
+
+- Only works while a board is connected — the offset is saved for that specific board.
+- Accepts a plain number with either `.` or `,` as the decimal separator, e.g. `2.31`, `2,31`, or `-2.31`.
+- Saved automatically.
+
 ## Requirements
 
 1. A balance board
@@ -87,6 +95,15 @@ button:
     on_press:
       then:
         - lambda: 'id(wbb)->remove_all_link_keys();'
+
+text:
+  - platform: template
+    name: "Weight offset"
+    mode: text
+    optimistic: true
+    on_value:
+      then:
+        - lambda: 'id(wbb)->set_offset(x);'
 ```
 
 Two complete example configs, both set up for a WEMOS LOLIN32 Lite:

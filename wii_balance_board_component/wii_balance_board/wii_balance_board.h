@@ -7,6 +7,7 @@
 #include "wii.h"
 
 #include <array>
+#include <string>
 #include <unordered_map>
 #include "task_queue.h"
 
@@ -38,6 +39,9 @@ class WiiBalanceBoard : public Component {
   void remove_link_key();
   void remove_all_link_keys();
 
+  // Set the calibration offset, in kg, for the currently connected board.
+  void set_offset(const std::string &value);
+
   void set_temperature_sensor(sensor::Sensor *temperature_sensor);
   void set_reference_temperature_sensor(sensor::Sensor *reference_temperature_sensor);
   void set_battery_level(sensor::Sensor *battery_level);
@@ -61,6 +65,12 @@ class WiiBalanceBoard : public Component {
   void schedule_disconnect_(uint16_t handle, uint32_t generation, uint32_t delay_ms);
   void set_ready_(bool ready);
 
+  // Per-board offset storage (NVS), keyed by bdaddr.
+  static bool load_offset_(uint64_t bdaddr, float *offset);
+  static void save_offset_(uint64_t bdaddr, float offset);
+  static bool remove_offset_(uint64_t bdaddr);
+  static int remove_all_offsets_();
+
   detail::Bluetooth bluetooth;
   detail::Wii wii;
   std::unordered_map<uint16_t, Sample> sampleMap;
@@ -77,6 +87,8 @@ class WiiBalanceBoard : public Component {
   bool active_board_{false};
   // Set once the board's 0 kg points and reference temperature have been rewritten.
   bool board_zeroed_{false};
+  // Calibration offset for the currently connected board, loaded from NVS on connect.
+  float active_offset_{0.0f};
 
   float std_dev_;
   int led_pin_ = -1;

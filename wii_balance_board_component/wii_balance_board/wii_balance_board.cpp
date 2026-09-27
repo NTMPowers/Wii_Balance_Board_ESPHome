@@ -6,12 +6,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#include <nvs_flash.h>
+#include <nvs.h>
 #include "utils.h"
 
 namespace esphome {
 namespace wii_balance_board {
 
 static const char *TAG = "wii_balance_board.component";
+static const char *NVS_NAMESPACE = "wii_bb";
 static constexpr size_t SAMPLE_WINDOW_SIZE = 64;
 static constexpr size_t TRIMMED_SAMPLE_COUNT = 6;
 
@@ -30,6 +36,120 @@ uint8_t interpret_battery_level(uint8_t batteryLevel) {
 }
 
 WiiBalanceBoard::WiiBalanceBoard() : wii(&bluetooth), std_dev_(0.4) {}
+
+bool WiiBalanceBoard::load_offset_(uint64_t bdaddr, float *offset) {
+  char nvs_key[24];
+  snprintf(nvs_key, sizeof(nvs_key), "of%012llX", static_cast<unsigned long long>(bdaddr));
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGD(TAG, "NVS open for offset failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  size_t size = sizeof(float);
+  err = nvs_get_blob(handle, nvs_key, offset, &size);
+  nvs_close(handle);
+  if (err != ESP_OK || size != sizeof(float)) {
+    ESP_LOGD(TAG, "No persisted offset for %012llX: %s", static_cast<unsigned long long>(bdaddr),
+             esp_err_to_name(err));
+    return false;
+  }
+  ESP_LOGD(TAG, "Loaded persisted offset for %012llX: %.2f kg", static_cast<unsigned long long>(bdaddr),
+           static_cast<double>(*offset));
+  return true;
+}
+
+void WiiBalanceBoard::save_offset_(uint64_t bdaddr, float offset) {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS open failed: %s", esp_err_to_name(err));
+    return;
+  }
+  char nvs_key[24];
+  snprintf(nvs_key, sizeof(nvs_key), "of%012llX", static_cast<unsigned long long>(bdaddr));
+  err = nvs_set_blob(handle, nvs_key, &offset, sizeof(float));
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS set blob failed: %s", esp_err_to_name(err));
+  }
+  err = nvs_commit(handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS commit failed: %s", esp_err_to_name(err));
+  }
+  nvs_close(handle);
+}
+
+bool WiiBalanceBoard::remove_offset_(uint64_t bdaddr) {
+  char nvs_key[24];
+  snprintf(nvs_key, sizeof(nvs_key), "of%012llX", static_cast<unsigned long long>(bdaddr));
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS open failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  err = nvs_erase_key(handle, nvs_key);
+  nvs_commit(handle);
+  nvs_close(handle);
+  if (err != ESP_OK) {
+    ESP_LOGD(TAG, "No stored offset %s to remove", nvs_key);
+    return false;
+  }
+  return true;
+}
+
+// Keys are collected before erasing: nvs_entry_next is not safe to use while
+// entries are being removed from the open handle.
+int WiiBalanceBoard::remove_all_offsets_() {
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "NVS open failed: %s", esp_err_to_name(err));
+    return 0;
+  }
+  std::vector<std::string> keys;
+  nvs_iterator_t iter = nullptr;
+  if (nvs_entry_find_in_handle(handle, NVS_TYPE_ANY, &iter) == ESP_OK) {
+    do {
+      nvs_entry_info_t info;
+      if (nvs_entry_info(iter, &info) != ESP_OK) {
+        continue;
+      }
+      if (strncmp(info.key, "of", 2) == 0) {
+        keys.emplace_back(info.key);
+      }
+    } while (nvs_entry_next(&iter) == ESP_OK);
+    nvs_release_iterator(iter);
+  }
+  int removed = 0;
+  for (const std::string &key : keys) {
+    if (nvs_erase_key(handle, key.c_str()) == ESP_OK) {
+      removed++;
+    }
+  }
+  nvs_commit(handle);
+  nvs_close(handle);
+  return removed;
+}
+
+void WiiBalanceBoard::set_offset(const std::string &value) {
+  if (active_bdaddr_ == 0) {
+    ESP_LOGW(TAG, "No board has connected yet, so there is no board to save the offset for");
+    return;
+  }
+  std::string normalized = value;
+  std::replace(normalized.begin(), normalized.end(), ',', '.');
+  char *end = nullptr;
+  float offset = strtof(normalized.c_str(), &end);
+  if (end == normalized.c_str() || *end != '\0') {
+    ESP_LOGE(TAG, "Invalid offset value: %s", value.c_str());
+    return;
+  }
+  active_offset_ = offset;
+  save_offset_(active_bdaddr_, offset);
+  ESP_LOGI(TAG, "Offset for %012llX set to %.2f kg", static_cast<unsigned long long>(active_bdaddr_),
+           static_cast<double>(offset));
+}
 
 void WiiBalanceBoard::set_ready_(bool ready) {
   if (ready_to_step_on_ != nullptr) {
@@ -52,26 +172,30 @@ void WiiBalanceBoard::disconnect_active_board_() {
 }
 
 void WiiBalanceBoard::remove_link_key() {
-  if (!active_board_ || active_handle_ == 0) {
-    ESP_LOGW(TAG, "No board is connected, so there is no link key to remove");
+  if (active_bdaddr_ == 0) {
+    ESP_LOGW(TAG, "No board has connected, so there is no link key to remove");
     return;
   }
   if (wii.remove_link_key(active_bdaddr_)) {
-    ESP_LOGI(TAG, "Removed the connected board's link key");
+    ESP_LOGI(TAG, "Removed the last connected board's link key");
   } else {
-    ESP_LOGW(TAG, "The connected board had no stored link key to remove");
+    ESP_LOGW(TAG, "The last connected board had no stored link key to remove");
   }
+  remove_offset_(active_bdaddr_);
+  active_offset_ = 0.0f;
   disconnect_active_board_();
 }
 
 void WiiBalanceBoard::remove_all_link_keys() {
   ESP_LOGI(TAG, "Removed every stored link key (%d). Every board will have to pair again.",
            wii.remove_all_link_keys());
+  remove_all_offsets_();
+  active_offset_ = 0.0f;
   disconnect_active_board_();
 }
 
 void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
-  ESP_LOGI(TAG, "Connected board: %012llX", static_cast<unsigned long long>(bdaddr));
+  ESP_LOGI(TAG, "Connected board %012llX", static_cast<unsigned long long>(bdaddr));
 
   if (sampleMap.count(handle) > 0) {
     ESP_LOGE(TAG, "Same handle connected twice, ignoring connection.");
@@ -86,6 +210,9 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   active_bdaddr_ = bdaddr;
   active_board_ = true;
   board_zeroed_ = false;
+  if (!load_offset_(bdaddr, &active_offset_)) {
+    active_offset_ = 0.0f;
+  }
   set_ready_(false);
   sampleMap.emplace(handle, sample);
   ESP_LOGI(TAG, "Zeroing the board");
@@ -114,7 +241,8 @@ void WiiBalanceBoard::schedule_disconnect_(uint16_t handle, uint32_t generation,
 
 void WiiBalanceBoard::board_tared(uint16_t handle, bool ok) {
   if (!ok) {
-    ESP_LOGE(TAG, "The board could not be zeroed, so no weight will be reported this session.");
+    ESP_LOGE(TAG, "The board could not be zeroed.");
+	disconnect_active_board_();
     return;
   }
   if (!active_board_ || handle != active_handle_) {
@@ -222,14 +350,14 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     float deviation = std::sqrt(variance);
 
     if (mean >= minimum_weight && deviation < std_dev_) {
-      sample.measurement = mean;
+      sample.measurement = mean + active_offset_;
       if (weight_ != nullptr)
         weight_->publish_state(sample.measurement);
       sample.measurement_published = true;
 
       // We have a valid sample, schedule board disconnect.
-      measurement_trigger_.trigger(mean);
-      ESP_LOGI(TAG, "Weight measured: %.2f kg", mean);
+      ESP_LOGI(TAG, "Weight measured: %.2f kg", sample.measurement);
+      measurement_trigger_.trigger(sample.measurement);
       ESP_LOGI(TAG, "Disconnecting the board");
       if (!queue.reschedule(handle, millis() + 100)) {
         ESP_LOGW(TAG, "Disconnect timer missing after measurement, scheduling fallback");
