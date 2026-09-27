@@ -72,7 +72,7 @@ wii_balance_board:
       sorting_group_id: config
       sorting_weight: 20
   ready_to_step_on:
-    name: "Ready to step on"
+    name: "Ready to weigh"
     web_server:
       sorting_group_id: readings
       sorting_weight: 1

@@ -19,7 +19,7 @@ link to hold. Each weighing is therefore a fresh connection:
 2. The ESP32 accepts the page, authenticates, and the two negotiate L2CAP channels.
 3. The board's own calibration is read out of its EEPROM.
 4. The board is **zeroed** (see below) while nothing is on it.
-5. `Ready to step on` goes on, and only then is a weight measured.
+5. `Ready to weigh` goes on, and only then is a weight measured.
 6. The ESP32 drops the link and the board powers off.
 
 A connection that produces no valid measurement is also torn down on a timer, so a session
@@ -46,12 +46,12 @@ A reading therefore comes from the board's own temperature-compensated calibrati
 zero fixed in the board's EEPROM.
 
 Zeroing runs before you step on, because it needs an empty board and a measurement needs you
-on it. `Ready to step on` goes on once the write has been verified, and only then is a weight
+on it. `Ready to weigh` goes on once the write has been verified, and only then is a weight
 measured.
 
 The average is discarded and retried, up to three times, if a sensor moved more than 200
 counts over the window or the board already reads over 5 kg. If no usable average is found,
-`Ready to step on` stays off and no weight is published for that session.
+`Ready to weigh` stays off and no weight is published for that session.
 
 The block checksum at `0xA4003C` is left as the factory set it, because no CRC32 over the
 calibration block reproduces the value stored there in either byte order, so there is no
@@ -136,7 +136,7 @@ wii_balance_board:
   id: wbb
   standard_deviation: 0.3
   ready_to_step_on:
-    name: "Ready to step on"
+    name: "Ready to weigh"
   weight:
     name: "Weight"
 
@@ -164,7 +164,7 @@ button:
 | --- | --- | --- |
 | `standard_deviation` | `0.4` | Maximum standard deviation, in kg, for a set of samples to count as a steady weight. Lower is stricter. |
 | `syncing` | `Syncing` | Binary sensor, on while scanning for a board. |
-| `ready_to_step_on` | `Ready to step on` | Binary sensor, on once the board has been zeroed and it is safe to step on. |
+| `ready_to_step_on` | `Ready to weigh` | Binary sensor, on once the board has been zeroed and it is safe to step on. |
 | `weight` | `Weight` | Measured weight. |
 | `temperature_sensor` | `Temperature` | The board's current temperature. |
 | `reference_temperature_sensor` | `Reference temperature` | The temperature the board was zeroed at. |
@@ -172,7 +172,7 @@ button:
 
 ## Using it
 
-Step on the board and wait for `Ready to step on` before putting your full weight on it. Each
+Step on the board and wait for `Ready to weigh` before putting your full weight on it. Each
 weighing is one connection: the ESP32 zeroes the board, measures, then drops the link and the
 board powers off.
 

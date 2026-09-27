@@ -132,8 +132,9 @@ async def to_code(config):
     )
     cg.add(var.set_ready_to_step_on(ready_to_step_on))
 
-    if led_pin := config.get(CONF_LED_PIN):
+    # is not None rather than a truth test: GPIO 0 and a 0.0 stddev are both valid.
+    if (led_pin := config.get(CONF_LED_PIN)) is not None:
         cg.add(var.set_led_pin(led_pin))
 
-    if stddev := config.get(CONF_STDDEV):
+    if (stddev := config.get(CONF_STDDEV)) is not None:
         cg.add(var.set_stddev(stddev))

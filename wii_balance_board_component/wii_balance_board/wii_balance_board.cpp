@@ -35,6 +35,10 @@ void WiiBalanceBoard::set_ready_(bool ready) {
   if (ready_to_step_on_ != nullptr) {
     ready_to_step_on_->publish_state(ready);
   }
+  // The on-board LED is lit only while it is safe to step on.
+  if (led_pin_ >= 0) {
+    digitalWrite(led_pin_, ready ? HIGH : LOW);
+  }
 }
 
 // Drop the link now instead of leaving the session up until the weighing timeout.
@@ -52,7 +56,7 @@ void WiiBalanceBoard::remove_link_key() {
     return;
   }
   if (wii.remove_link_key(active_bdaddr_)) {
-    ESP_LOGI(TAG, "Removed the stored link key for the connected board. It will have to pair again.");
+    ESP_LOGI(TAG, "Removed the connected board's link key");
   } else {
     ESP_LOGW(TAG, "The connected board had no stored link key to remove");
   }
@@ -128,9 +132,6 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
   if (active_board_ && active_handle_ == handle) {
     active_board_ = false;
     board_zeroed_ = false;
-  }
-  if (active_bdaddr_ == 0) {
-    set_ready_(false);
   }
   if (sampleMap.count(handle) > 0) {
     auto &sample = sampleMap[handle];
@@ -237,6 +238,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
       // We have a valid sample, schedule board disconnect.
       ESP_LOGI(TAG, "Weight measured: %.2f kg", mean);
+      ESP_LOGI(TAG, "Disconnecting the board");
       if (!queue.reschedule(handle, millis() + 100)) {
         ESP_LOGW(TAG, "Disconnect timer missing after measurement, scheduling fallback");
         schedule_disconnect_(handle, active_generation_, 100);
@@ -248,30 +250,16 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 void WiiBalanceBoard::setup() {
   if (led_pin_ >= 0) {
     pinMode(led_pin_, OUTPUT);
-    digitalWrite(led_pin_, HIGH);
   }
   set_ready_(false);
   bluetooth.onReady([](auto) { ESP_LOGI(TAG, "Bluetooth initialized"); });
 
   wii.onEvent([this](const detail::WiiEvent &event) {
     std::visit(overloaded{
-                   [this](const detail::ScanStarted &) {
-                     syncing_->publish_state(true);
-                     if (led_pin_ >= 0) {
-                       digitalWrite(led_pin_, LOW);
-                     }
-                   },
-                   [this](const detail::ScanStopped &) {
-                     syncing_->publish_state(false);
-                     if (led_pin_ >= 0) {
-                       digitalWrite(led_pin_, HIGH);
-                     }
-                   },
+                   [this](const detail::ScanStarted &) { syncing_->publish_state(true); },
+                   [this](const detail::ScanStopped &) { syncing_->publish_state(false); },
                     [this](const detail::BalanceBoardConnected &board) {
                       syncing_->publish_state(false);
-                      if (led_pin_ >= 0) {
-                        digitalWrite(led_pin_, HIGH);
-                      }
                       sync(false);
                       this->board_connected(board.handle, board.bdaddr);
                     },
