@@ -546,7 +546,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
       if (!pairingAllowed_() && !bluetooth->hasLinkKey(result.bdaddr)) {
         if (now - lastUnpairedRefusalLogMs_ >= UNPAIRED_REFUSAL_LOG_INTERVAL_MS) {
           lastUnpairedRefusalLogMs_ = now;
-          ESP_LOGI(TAG, "Refused unpaired board %012llX. Press Start sync.", static_cast<unsigned long long>(result.bdaddr));
+          ESP_LOGI(TAG, "Refused unpaired board %012llX", static_cast<unsigned long long>(result.bdaddr));
         } else {
           ESP_LOGD(TAG, "Refused a connection from unpaired board %012llX",
                    static_cast<unsigned long long>(result.bdaddr));

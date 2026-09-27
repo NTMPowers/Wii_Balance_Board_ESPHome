@@ -65,7 +65,7 @@ connect. The board pages the ESP32, the ESP32 checks its NVS for a key for that 
 the connection is refused if there isn't one. The refusal is logged:
 
 ```
-[I] [wii_balance_board.component:058] Refused unpaired board 00224C56A440. Press Start sync.
+[I] [wii_balance_board.component:058] Refused unpaired board 00224C56A440
 ```
 
 This matters because answering a PIN request is what performs pairing. Without this check a
@@ -102,8 +102,11 @@ board from immediately re-connecting before it has been stepped off.
 ## Requirements
 
 1. A balance board
-2. A Home Assistant setup
-3. An ESP32 device with support for BR/EDR.
+2. A home assistant setup
+3. An ESP32 device with support for BR/EDR, powered from mains.
+
+Wi-Fi power save is left off and the Bluetooth controller's modem sleep is disabled, so the
+radio is always listening for a page from the board.
 
 ## Sample Configuration
 
