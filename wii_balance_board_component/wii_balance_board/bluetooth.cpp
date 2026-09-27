@@ -254,10 +254,10 @@ struct Bluetooth::Impl {
       }
     }
 
-    // Drain every queued RX packet per tick (not just one): our disconnect
-    // handshake uses wall-clock retry timers, so leaving confirmations
-    // sitting unread behind other traffic can make a graceful disconnect
-    // time out and escalate to an abrupt one even though the peer already
+    // Drain every queued RX packet per tick: the disconnect handshake uses
+    // wall-clock retry timers, so leaving confirmations sitting unread behind
+    // other traffic can make a graceful disconnect time out and escalate to an
+    // abrupt one even though the peer already saw it.
     // replied.
     while (auto rxData = rxBuffer.read(0)) {
       const char *type;
@@ -774,10 +774,8 @@ struct Bluetooth::Impl {
 
       sendL2DataChannel(handle, 0x0001, response, 8);
       connections.remove(*connection);
-      // The board is allowed to close a channel on its own (e.g. its own idle
-      // power-off timer); tell the app layer the same way we would for a
-      // response to our own disconnect request, so it can finish tearing
-      // down rather than leaving a stale ACL link and app-level state.
+      // The board closes the channel itself when it reaches its own idle
+      // power-off timer. Report it so the app layer can tear the session down.
       aclListener(bluetooth, ACLDisconnected{.handle = handle, .psm = psm});
     } else {
       ESP_LOGD(TAG, "Mismatch");

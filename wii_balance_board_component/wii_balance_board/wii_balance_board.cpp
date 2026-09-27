@@ -37,8 +37,7 @@ void WiiBalanceBoard::set_ready_(bool ready) {
   }
 }
 
-// Forgetting a board while it is connected would otherwise leave the session up until
-// the weighing timeout expires.
+// Drop the link now instead of leaving the session up until the weighing timeout.
 void WiiBalanceBoard::disconnect_active_board_() {
   if (!active_board_ || active_handle_ == 0) {
     return;

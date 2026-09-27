@@ -53,10 +53,10 @@ The average is discarded and retried, up to three times, if a sensor moved more 
 counts over the window or the board already reads over 5 kg. If no usable average is found,
 `Ready to step on` stays off and no weight is published for that session.
 
-`0xA4003C` is never written. No CRC32 over the calibration block reproduces the value stored
-there in either byte order, so there is no correct value to write back and it is left as the
-factory set it. The rest of the factory block is logged at `DEBUG` on every connection so the
-original calibration can be restored by hand.
+The block checksum at `0xA4003C` is left as the factory set it, because no CRC32 over the
+calibration block reproduces the value stored there in either byte order, so there is no
+correct value to write. The rest of the factory block is logged at `DEBUG` on every connection
+so the original calibration can be restored by hand.
 
 ### Pairing
 
@@ -68,17 +68,15 @@ the connection is refused if there isn't one. The refusal is logged:
 [I] [wii_balance_board.component:058] Refused unpaired board 00224C56A440
 ```
 
-This matters because answering a PIN request is what performs pairing. Without this check a
-board whose key has been removed simply asks for a PIN and is paired again on the spot, so
-`Remove board` and `Remove all boards` would appear to do nothing.
+Answering a PIN request is what performs pairing, so a PIN request is only answered inside the
+pairing window opened by **Start sync**. That button allows an unpaired board to connect and
+complete PIN entry for 60 seconds, then runs an inquiry to find it. Press it whenever a board
+needs pairing again, including right after using one of the removal buttons. Both removal
+buttons disconnect a connected board immediately rather than leaving the session up until it
+times out.
 
-**Start sync** opens a 60 second window in which an unpaired board may connect and complete
-PIN entry, then runs an inquiry to find it. Press it whenever a board needs pairing again,
-including right after using one of the removal buttons. Both removal buttons disconnect a
-connected board immediately rather than leaving the session up until it times out.
-
-Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wii_bb` namespace), so
-re-authentication on a later reconnect does not need the sync-button PIN flow.
+Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wii_bb` namespace), so a later
+reconnect re-authenticates from the stored key.
 
 ### Reconnection
 
@@ -88,7 +86,7 @@ authentication and L2CAP once the *host* has taken the master role. Two things m
 happen on an ESP32:
 
 1. **The btdm controller must be built for BR/EDR.** ESPHome's default sdkconfig leaves the controller at `BTDM_CTRL_MODE_BLE_ONLY` (with `BR_EDR_MAX_ACL_CONN_EFF=0`) even when `CONFIG_CLASSIC_BT_ENABLED` is set, because arduino-esp32's `btStart()` enables classic at runtime regardless. In that configuration the accept-time role switch fails (`Role Changed status=0x35`) and classic links behave erratically. The sample configuration below sets `CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY`, which compiles the controller for classic-only use and fixes the role switch.
-2. **The host must become master and defer auth.** The component accepts the board's page with `role=0x00`, sends `Write_Default_Link_Policy_Settings(0x0001)` during init so the controller is permitted to switch roles, and issues an explicit `Switch_Role` after the link is established. `Authentication_Requested` is deferred until the `Role Changed` event resolves. Once the host is master and the link is encrypted, the *board* opens L2CAP PSM 0x11/0x13 — the host no longer tries to open them itself on a reconnect.
+2. **The host must become master and defer auth.** The component accepts the board's page with `role=0x00`, sends `Write_Default_Link_Policy_Settings(0x0001)` during init so the controller is permitted to switch roles, and issues an explicit `Switch_Role` after the link is established. `Authentication_Requested` is deferred until the `Role Changed` event resolves. Once the host is master and the link is encrypted, the *board* opens L2CAP PSM 0x11/0x13, so on a reconnect the host waits for the channels instead of initiating them.
 
 If the board fires a role switch of its own at the same instant as ours, the two LMP
 transactions collide and we end up slave anyway, which strands the session. That collision
@@ -148,6 +146,16 @@ button:
     on_press:
       then:
         - lambda: 'id(wbb)->sync(true);'
+  - platform: template
+    name: "Remove board"
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_link_key();'
+  - platform: template
+    name: "Remove all boards"
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_all_link_keys();'
 ```
 
 ### Options
@@ -170,17 +178,14 @@ board powers off.
 
 ## Logging
 
-Normal use logs three things per weighing: the connection, the measurement, and the
-disconnect. Failures — a board that could not be zeroed, a rejected write, a link that
-dropped unexpectedly — are logged at `WARN` or above, and nothing else is.
+Normal use logs five lines per weighing: the connection, the zeroing, the readiness, the
+measurement, and the disconnect. Failures — a board that could not be zeroed, a rejected
+write, a link that dropped unexpectedly — are logged at `WARN` or above, and nothing else is.
 
 The byte-level detail (raw HCI/ACL traffic, the EEPROM reads and writes, the factory
-calibration block, the zeroed values) is at `DEBUG` and `VERBOSE`. Set
-`logger: level: VERBOSE` when troubleshooting a link or bringing the zeroing up on new
-hardware; expect a lot of output.
-
-Note that the zeroing diagnostics are deliberately below `INFO`: a normal connect should
-not fill the log with lines describing steps that are going exactly as intended.
+calibration block, the averaged zero and the write read-backs) is at `DEBUG` and `VERBOSE`.
+Set `logger: level: VERBOSE` when troubleshooting a link or bringing the zeroing up on new
+hardware, and expect a lot of output.
 
 ## Contributions
 

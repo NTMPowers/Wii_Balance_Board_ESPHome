@@ -540,9 +540,8 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
         rejectBoardUntil_ = now + BOARD_RECONNECT_COOLDOWN_MS;  // restart the cooldown window
         return false;
       }
-      // A stored link key is what marks a board as paired. Without one it would
-      // fall through to PIN entry and re-pair itself silently, so only let it in
-      // while the user has asked to pair.
+      // A board with no stored key would fall through to PIN entry and pair
+      // itself, so only let one in during an explicit pairing window.
       if (!pairingAllowed_() && !bluetooth->hasLinkKey(result.bdaddr)) {
         if (now - lastUnpairedRefusalLogMs_ >= UNPAIRED_REFUSAL_LOG_INTERVAL_MS) {
           lastUnpairedRefusalLogMs_ = now;
