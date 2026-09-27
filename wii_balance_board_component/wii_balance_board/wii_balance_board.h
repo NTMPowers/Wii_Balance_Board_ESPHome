@@ -15,7 +15,7 @@ namespace esphome {
 namespace wii_balance_board {
 
 struct Sample {
-  float samples[64]{};
+  float samples[128]{};
   size_t sample_count{0};
   size_t samples_filled{0};
   uint8_t temperature{0};
@@ -54,6 +54,9 @@ class WiiBalanceBoard : public Component {
 
   // Fires when a weighing is accepted, with the measured weight in kg.
   Trigger<float> *get_measurement_trigger() { return &this->measurement_trigger_; }
+
+  // Fires right after a board connects, with its saved offset in kg (0 if none saved).
+  Trigger<float> *get_offset_loaded_trigger() { return &this->offset_loaded_trigger_; }
 
  protected:
   void board_connected(uint16_t handle, uint64_t bdaddr);
@@ -101,6 +104,7 @@ class WiiBalanceBoard : public Component {
   binary_sensor::BinarySensor *syncing_{nullptr};
   binary_sensor::BinarySensor *ready_to_step_on_{nullptr};
   Trigger<float> measurement_trigger_;
+  Trigger<float> offset_loaded_trigger_;
 };
 
 }  // namespace wii_balance_board

@@ -31,6 +31,7 @@ CONF_STDDEV = "standard_deviation"
 CONF_LED_PIN = "led_pin"
 CONF_LED_INVERTED = "led_inverted"
 CONF_ON_MEASUREMENT = "on_measurement"
+CONF_ON_OFFSET_LOADED = "on_offset_loaded"
 
 wii_balance_board_ns = cg.esphome_ns.namespace("wii_balance_board")
 WiiBalanceBoard = wii_balance_board_ns.class_("WiiBalanceBoard", cg.Component)
@@ -108,9 +109,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_MEASUREMENT): automation.validate_automation(
             single=True
         ),
+        cv.Optional(CONF_ON_OFFSET_LOADED): automation.validate_automation(
+            single=True
+        ),
     }
 )
-
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
@@ -152,4 +155,11 @@ async def to_code(config):
             var.get_measurement_trigger(),
             [(float, "weight")],
             config[CONF_ON_MEASUREMENT],
+        )
+
+    if CONF_ON_OFFSET_LOADED in config:
+        await automation.build_automation(
+            var.get_offset_loaded_trigger(),
+            [(float, "offset")],
+            config[CONF_ON_OFFSET_LOADED],
         )

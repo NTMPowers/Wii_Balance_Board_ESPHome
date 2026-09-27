@@ -70,14 +70,26 @@ external_components:
       type: local
       path: ./wii_balance_board_component
     components: [ wii_balance_board ]
+    
+globals:
+  - id: loading_offset
+    type: bool
+    initial_value: 'false'
 
 wii_balance_board:
   id: wbb
-  standard_deviation: 0.3
   ready_to_step_on:
     name: "Ready to weigh"
   weight:
     name: "Weight"
+  on_offset_loaded:
+    then:
+      - lambda: |-
+          id(loading_offset) = true;
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%.2f", offset);
+          id(offset_text).publish_state(buf);
+          id(loading_offset) = false;
 
 button:
   - platform: template
@@ -98,12 +110,17 @@ button:
 
 text:
   - platform: template
+    id: offset_text
     name: "Weight offset"
     mode: text
     optimistic: true
     on_value:
       then:
-        - lambda: 'id(wbb)->set_offset(x);'
+        - if:
+            condition:
+              lambda: 'return !id(loading_offset);'
+            then:
+              - lambda: 'id(wbb)->set_offset(x);'
 ```
 
 Two complete example configs, both set up for a WEMOS LOLIN32 Lite:
@@ -115,7 +132,7 @@ Two complete example configs, both set up for a WEMOS LOLIN32 Lite:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `standard_deviation` | `0.4` | Maximum standard deviation, in kg, for a set of samples to count as a steady weight. Lower is stricter. |
+| `standard_deviation` | `0.2` | Maximum standard deviation, in kg, for a set of samples to count as a steady weight. Lower is stricter. |
 | `syncing` | `Syncing` | Binary sensor, on while scanning for a board. |
 | `ready_to_step_on` | `Ready to weigh` | Binary sensor, on once the board has been zeroed and it is safe to step on. |
 | `weight` | `Weight` | Measured weight. |

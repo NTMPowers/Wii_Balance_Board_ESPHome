@@ -18,8 +18,8 @@ namespace wii_balance_board {
 
 static const char *TAG = "wii_balance_board.component";
 static const char *NVS_NAMESPACE = "wii_bb";
-static constexpr size_t SAMPLE_WINDOW_SIZE = 64;
-static constexpr size_t TRIMMED_SAMPLE_COUNT = 6;
+static constexpr size_t SAMPLE_WINDOW_SIZE = 128;
+static constexpr size_t TRIMMED_SAMPLE_COUNT = 12;
 
 uint8_t interpret_battery_level(uint8_t batteryLevel) {
   if (batteryLevel >= 0x8d) {
@@ -35,7 +35,7 @@ uint8_t interpret_battery_level(uint8_t batteryLevel) {
   }
 }
 
-WiiBalanceBoard::WiiBalanceBoard() : wii(&bluetooth), std_dev_(0.4) {}
+WiiBalanceBoard::WiiBalanceBoard() : wii(&bluetooth), std_dev_(0.2) {}
 
 bool WiiBalanceBoard::load_offset_(uint64_t bdaddr, float *offset) {
   char nvs_key[24];
@@ -213,6 +213,8 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   if (!load_offset_(bdaddr, &active_offset_)) {
     active_offset_ = 0.0f;
   }
+  // Fire trigger so YAML automation can publish the offset to the text sensor.
+  offset_loaded_trigger_.trigger(active_offset_);
   set_ready_(false);
   sampleMap.emplace(handle, sample);
   ESP_LOGI(TAG, "Zeroing the board");
@@ -251,6 +253,10 @@ void WiiBalanceBoard::board_tared(uint16_t handle, bool ok) {
   board_zeroed_ = true;
   set_ready_(true);
   ESP_LOGI(TAG, "Ready to weigh");
+  
+  // Reset the timeout
+  queue.cancel(handle);
+  schedule_disconnect_(handle, active_generation_, 15000);
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {
@@ -263,7 +269,6 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
     board_zeroed_ = false;
   }
   sampleMap.erase(handle);
-  set_ready_(false);
 }
 
 void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature,
@@ -319,7 +324,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     return;
   }
 
-  int size = 64;
+  int size = 128;
   sample.samples[sample.sample_count] = weight;
   sample.sample_count = (sample.sample_count + 1) % size;
   sample.samples_filled = std::min(sample.samples_filled + 1, static_cast<size_t>(size));
@@ -354,15 +359,16 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
       if (weight_ != nullptr)
         weight_->publish_state(sample.measurement);
       sample.measurement_published = true;
+	  set_ready_(false);
 
       // We have a valid sample, schedule board disconnect.
       ESP_LOGI(TAG, "Weight measured: %.2f kg", sample.measurement);
-      measurement_trigger_.trigger(sample.measurement);
       ESP_LOGI(TAG, "Disconnecting the board");
       if (!queue.reschedule(handle, millis() + 100)) {
         ESP_LOGW(TAG, "Disconnect timer missing after measurement, scheduling fallback");
         schedule_disconnect_(handle, active_generation_, 100);
       }
+      measurement_trigger_.trigger(sample.measurement);
     }
   }
 }

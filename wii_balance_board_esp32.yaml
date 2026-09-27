@@ -41,10 +41,14 @@ external_components:
       type: local
       path: ./wii_balance_board_component
     components: [ wii_balance_board ]
+    
+globals:
+  - id: loading_offset
+    type: bool
+    initial_value: 'false'
 
 wii_balance_board:
   id: wbb
-  standard_deviation: 0.3
   led_pin: 22
   led_inverted: true
   temperature_sensor:
@@ -77,6 +81,14 @@ wii_balance_board:
     web_server:
       sorting_group_id: readings
       sorting_weight: 1
+  on_offset_loaded:
+    then:
+      - lambda: |-
+          id(loading_offset) = true;
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%.2f", offset);
+          id(offset_text).publish_state(buf);
+          id(loading_offset) = false;
 
 button:
   - platform: template
@@ -109,6 +121,7 @@ button:
 
 text:
   - platform: template
+    id: offset_text
     name: "Weight offset"
     icon: "mdi:scale-balance"
     mode: text
@@ -118,4 +131,8 @@ text:
       sorting_weight: 10
     on_value:
       then:
-        - lambda: 'id(wbb)->set_offset(x);'
+        - if:
+            condition:
+              lambda: 'return !id(loading_offset);'
+            then:
+              - lambda: 'id(wbb)->set_offset(x);'
