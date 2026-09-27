@@ -228,6 +228,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
       sample.measurement_published = true;
 
       // We have a valid sample, schedule board disconnect.
+      measurement_trigger_.trigger(mean);
       ESP_LOGI(TAG, "Weight measured: %.2f kg", mean);
       ESP_LOGI(TAG, "Disconnecting the board");
       if (!queue.reschedule(handle, millis() + 100)) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "wii.h"
@@ -47,6 +48,9 @@ class WiiBalanceBoard : public Component {
   void set_led_pin(int led_pin);
   void set_led_inverted(bool inverted);
 
+  // Fires when a weighing is accepted, with the measured weight in kg.
+  Trigger<float> *get_measurement_trigger() { return &this->measurement_trigger_; }
+
  protected:
   void board_connected(uint16_t handle, uint64_t bdaddr);
   void board_disconnected(uint16_t handle);
@@ -84,6 +88,7 @@ class WiiBalanceBoard : public Component {
   sensor::Sensor *weight_{nullptr};
   binary_sensor::BinarySensor *syncing_{nullptr};
   binary_sensor::BinarySensor *ready_to_step_on_{nullptr};
+  Trigger<float> measurement_trigger_;
 };
 
 }  // namespace wii_balance_board

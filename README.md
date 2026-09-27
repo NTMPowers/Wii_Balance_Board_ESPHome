@@ -1,107 +1,39 @@
 # Wii Balance Board ESPHome component
 
-Use a Wii Balance Board as a smart scale in Home Assistant.
-
-<img width="329" height="583" alt="image" src="https://github.com/user-attachments/assets/92ac038c-ad78-400b-9394-d109598193c5" />
-
-More in depth documentation on the Bluetooth protocol available [here](https://tightloop.io/homeassistant+balanceboard/index.html).
-
-This fork is based on [gulrotkake's balance-board component](https://github.com/gulrotkake/esphome/tree/balance-board) and fixes **board-initiated reconnection**, which never worked upstream: after the first weighing, the ESP32 could only talk to the board again after a manual sync pairing. With this fork the board reconnects automatically whenever someone steps on it.
+Use a Wii Balance Board as a smart scale.
 
 ## How it works
 
-### One weighing per connection
+Each weighing is one fresh connection — the board is battery powered and shuts itself
+down afterward, so there's no link to keep open between uses.
 
-The board is battery powered and shuts itself down after a weighing, so there is no long-lived
-link to hold. Each weighing is therefore a fresh connection:
+1. Step on the board. It powers on and connects to the ESP32.
+2. The board re-zeros itself with nothing on it yet, using its own calibration.
+3. `Ready to weigh` turns on.
+4. Step on and your weight is measured.
+5. The board disconnects and powers off.
 
-1. You step on the board, which powers it and pages the paired ESP32.
-2. The ESP32 accepts the page, authenticates, and the two negotiate L2CAP channels.
-3. The board's own calibration is read out of its EEPROM.
-4. The board is **zeroed** (see below) while nothing is on it.
-5. `Ready to weigh` goes on, and only then is a weight measured.
-6. The ESP32 drops the link and the board powers off.
+If a connection doesn't produce a valid measurement, it's automatically dropped after a
+short timeout, so a session can never hang.
 
-A connection that produces no valid measurement is also torn down on a timer, so a session
-can never hang indefinitely.
+For how the Bluetooth link and calibration actually work under the hood, see
+[TECHNICAL.md](TECHNICAL.md).
 
-### Zeroing the board on every connection
+## Pairing
 
-The board keeps three calibration points per load cell — 0 kg, 17 kg and 34 kg — plus a
-reference temperature, in its own EEPROM. A reading is produced by interpolating each cell
-between those points and correcting for the difference between the current temperature and
-the reference temperature.
+A board must be paired before it will connect.
 
-The 0 kg point drifts, and it is re-derived by the board on every boot, so the ESP32
-re-establishes it at the start of each connection:
+1. Press **Start sync**. This opens a 60-second pairing window.
+2. Step on the new board within that window and complete the PIN prompt.
 
-1. The board's 0/17/34 kg points and reference temperature are read from EEPROM.
-2. The reporting mode is set to 0x34, which is what makes the board stream weight reports.
-3. The raw sensors are averaged over 2 seconds with nothing on the board.
-4. The average is written back as the new 0 kg points, and the temperature read during
-   that window is written back as the new reference temperature.
-5. Both are read back and compared against what was written.
+Once paired, the board reconnects automatically every time you press the A-button.
 
-A reading therefore comes from the board's own temperature-compensated calibration, with the
-zero fixed in the board's EEPROM.
-
-Zeroing runs before you step on, because it needs an empty board and a measurement needs you
-on it. `Ready to weigh` goes on once the write has been verified, and only then is a weight
-measured.
-
-The average is discarded and retried, up to three times, if a sensor moved more than 200
-counts over the window or the board already reads over 5 kg. If no usable average is found,
-`Ready to weigh` stays off and no weight is published for that session.
-
-The block checksum at `0xA4003C` is left as the factory set it, because no CRC32 over the
-calibration block reproduces the value stored there in either byte order, so there is no
-correct value to write. The rest of the factory block is logged at `DEBUG` on every connection
-so the original calibration can be restored by hand.
-
-### Pairing
-
-A stored link key is what marks a board as paired, and only a board with one is allowed to
-connect. The board pages the ESP32, the ESP32 checks its NVS for a key for that address, and
-the connection is refused if there isn't one. The refusal is logged:
-
-```
-[I] [wii_balance_board.component:058] Refused unpaired board 00224C56A440
-```
-
-Answering a PIN request is what performs pairing, so a PIN request is only answered inside the
-pairing window opened by **Start sync**. That button allows an unpaired board to connect and
-complete PIN entry for 60 seconds, then runs an inquiry to find it. Press it whenever a board
-needs pairing again, including right after using one of the removal buttons. Both removal
-buttons disconnect a connected board immediately rather than leaving the session up until it
-times out.
-
-Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wii_bb` namespace), so a later
-reconnect re-authenticates from the stored key.
-
-### Reconnection
-
-The RVL-WBC-01 pages the previously paired host whenever it is stepped on. The Bluetooth
-baseband pager becomes the link's initial master, but the board's firmware only proceeds to
-authentication and L2CAP once the *host* has taken the master role. Two things make that
-happen on an ESP32:
-
-1. **The btdm controller must be built for BR/EDR.** ESPHome's default sdkconfig leaves the controller at `BTDM_CTRL_MODE_BLE_ONLY` (with `BR_EDR_MAX_ACL_CONN_EFF=0`) even when `CONFIG_CLASSIC_BT_ENABLED` is set, because arduino-esp32's `btStart()` enables classic at runtime regardless. In that configuration the accept-time role switch fails (`Role Changed status=0x35`) and classic links behave erratically. The sample configuration below sets `CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY`, which compiles the controller for classic-only use and fixes the role switch.
-2. **The host must become master and defer auth.** The component accepts the board's page with `role=0x00`, sends `Write_Default_Link_Policy_Settings(0x0001)` during init so the controller is permitted to switch roles, and issues an explicit `Switch_Role` after the link is established. `Authentication_Requested` is deferred until the `Role Changed` event resolves. Once the host is master and the link is encrypted, the *board* opens L2CAP PSM 0x11/0x13, so on a reconnect the host waits for the channels instead of initiating them.
-
-If the board fires a role switch of its own at the same instant as ours, the two LMP
-transactions collide and we end up slave anyway, which strands the session. That collision
-is detected and the role switch is retried once the link is encrypted and the board's own
-attempt has long finished, which cannot collide again.
-
-The board also re-pages within a few seconds of a clean disconnect while someone is still
-standing on it. Those pages are rejected for 10 seconds after each attempt, which stops the
-board from immediately re-connecting before it has been stepped off.
+- **Remove board** / **Remove all boards** forget the stored pairing(s).
 
 ## Requirements
 
 1. A balance board
-2. A home assistant setup
-3. An ESP32 device with support for BR/EDR.
+2. An ESP32 device with support for BR/EDR (classic) Bluetooth
 
 ## Sample Configuration
 
@@ -119,8 +51,7 @@ esp32:
       CONFIG_BT_ENABLED: y
       CONFIG_BLUEDROID_ENABLED: y
       CONFIG_CLASSIC_BT_ENABLED: y
-      # Required: build the controller for classic-only mode so the
-      # accept-time role switch works (default BLE_ONLY breaks it).
+      # Required — see TECHNICAL.md for why.
       CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY: y
 
 logger:
@@ -139,8 +70,6 @@ wii_balance_board:
     name: "Ready to weigh"
   weight:
     name: "Weight"
-  led_pin: 22
-  led_inverted: true
 
 button:
   - platform: template
@@ -160,6 +89,11 @@ button:
         - lambda: 'id(wbb)->remove_all_link_keys();'
 ```
 
+Two complete example configs, both set up for a WEMOS LOLIN32 Lite:
+
+- [`wii_balance_board_esp32.yaml`](wii_balance_board_esp32.yaml) — full working config.
+- [`wii_balance_board_esp32_pushover.yaml`](wii_balance_board_esp32_pushover.yaml) — the same, plus sends each completed measurement to Pushover.
+
 ### Options
 
 | Option | Default | Description |
@@ -173,26 +107,34 @@ button:
 | `battery_level` | `Battery level` | Battery percentage. |
 | `led_pin` | none | GPIO with an LED that is lit while the board is ready to weigh. |
 | `led_inverted` | `false` | Set to `true` for an LED that lights on a low output, such as the LOLIN32 Lite's on-board LED on GPIO 22. |
+| `on_measurement` | none | Automation that runs whenever a weighing is accepted, with the measured weight as `weight` in kg. |
+
+## Reacting to a weighing
+
+`on_measurement` fires once per accepted weighing, so it can drive any automation. The
+measured weight in kg is available as `weight`.
+
+```yaml
+wii_balance_board:
+  id: wbb
+  battery_level:
+    id: wbb_battery
+  on_measurement:
+    then:
+      - logger.log:
+          format: "Weighed %.2f kg on %d%% battery"
+          args: [ 'weight', '(int) lroundf(id(wbb_battery).state)' ]
+```
+
+Give a sensor an `id:` to read its value from a lambda, as `battery_level` does above.
 
 ## Using it
 
-Step on the board and wait for `Ready to weigh` before putting your full weight on it. Each
-weighing is one connection: the ESP32 zeroes the board, measures, then drops the link and the
-board powers off.
-
-## Logging
-
-Normal use logs five lines per weighing: the connection, the zeroing, the readiness, the
-measurement, and the disconnect. Failures — a board that could not be zeroed, a rejected
-write, a link that dropped unexpectedly — are logged at `WARN` or above, and nothing else is.
-
-The byte-level detail (raw HCI/ACL traffic, the EEPROM reads and writes, the factory
-calibration block, the averaged zero and the write read-backs) is at `DEBUG` and `VERBOSE`.
-Set `logger: level: VERBOSE` when troubleshooting a link or bringing the zeroing up on new
-hardware, and expect a lot of output.
+Connect the board and wait for `Ready to weigh` before stepping on it.
+Each weighing is one connection: the ESP32 zeroes the board, measures, then drops the
+link and the board powers off.
 
 ## Contributions
 
 - The original wiimote code (wiimote_bt.h, Wiimote.h and Wiimot.cpp) was from https://github.com/takeru/Wiimote, and was extended in https://github.com/gulrotkake/esp32_wiimote .
-- Zeroing follows the procedure in Nintendo's own balance board programming manual and the
-  register map in [WiiBrew](https://wiibrew.org/wiki/Wii_Balance_Board).
+- Zeroing follows the procedure in Nintendo's own balance board programming manual and the register map in [WiiBrew](https://wiibrew.org/wiki/Wii_Balance_Board).

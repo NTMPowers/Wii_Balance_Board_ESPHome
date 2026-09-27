@@ -1,3 +1,4 @@
+from esphome import automation
 import esphome.codegen as cg
 from esphome.components import binary_sensor, sensor
 import esphome.config_validation as cv
@@ -29,6 +30,7 @@ CONF_REF_TEMPERATURE = "reference_temperature_sensor"
 CONF_STDDEV = "standard_deviation"
 CONF_LED_PIN = "led_pin"
 CONF_LED_INVERTED = "led_inverted"
+CONF_ON_MEASUREMENT = "on_measurement"
 
 wii_balance_board_ns = cg.esphome_ns.namespace("wii_balance_board")
 WiiBalanceBoard = wii_balance_board_ns.class_("WiiBalanceBoard", cg.Component)
@@ -103,6 +105,9 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_SCALE,
         ),
         cv.Optional(CONF_STDDEV, default=0.4): cv.float_range(0, 5),
+        cv.Optional(CONF_ON_MEASUREMENT): automation.validate_automation(
+            single=True
+        ),
     }
 )
 
@@ -141,3 +146,10 @@ async def to_code(config):
 
     if (stddev := config.get(CONF_STDDEV)) is not None:
         cg.add(var.set_stddev(stddev))
+
+    if CONF_ON_MEASUREMENT in config:
+        await automation.build_automation(
+            var.get_measurement_trigger(),
+            [(float, "weight")],
+            config[CONF_ON_MEASUREMENT],
+        )

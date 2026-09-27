@@ -1,0 +1,142 @@
+esphome:
+  name: wii-balance-board
+  friendly_name: "Wii Balance Board"
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: arduino
+    sdkconfig_options:
+      CONFIG_BT_ENABLED: y
+      CONFIG_BLUEDROID_ENABLED: y
+      CONFIG_CLASSIC_BT_ENABLED: y
+      CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY: y
+      CONFIG_BTDM_CTRL_MODEM_SLEEP: n
+
+logger:
+  level: INFO
+
+web_server:
+  port: 80
+  version: 3
+  sorting_groups:
+    - id: readings
+      name: "Wii Balance Board"
+      sorting_weight: 10
+    - id: config
+      name: "Config"
+      sorting_weight: 30
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+http_request:
+  verify_ssl: true
+  timeout: 15s
+
+external_components:
+  - source:
+      type: local
+      path: ./wii_balance_board_component
+    components: [ wii_balance_board ]
+
+wii_balance_board:
+  id: wbb
+  standard_deviation: 0.3
+  led_pin: 22
+  led_inverted: true
+  temperature_sensor:
+    id: wbb_temperature
+    name: "Temperature"
+    web_server:
+      sorting_group_id: readings
+      sorting_weight: 30
+  reference_temperature_sensor:
+    name: "Reference temperature"
+    web_server:
+      sorting_group_id: readings
+      sorting_weight: 40
+  battery_level:
+    id: wbb_battery
+    name: "Battery level"
+    web_server:
+      sorting_group_id: readings
+      sorting_weight: 20
+  weight:
+    name: "Weight"
+    web_server:
+      sorting_group_id: readings
+      sorting_weight: 10
+  syncing:
+    name: "Syncing"
+    web_server:
+      sorting_group_id: config
+      sorting_weight: 20
+  ready_to_step_on:
+    name: "Ready to weigh"
+    web_server:
+      sorting_group_id: readings
+      sorting_weight: 1
+  on_measurement:
+    then:
+      - http_request.post:
+          url: https://api.pushover.net/1/messages.json
+          capture_response: true
+          request_headers:
+            Content-Type: application/json
+          json:
+            token: !secret pushover_appkey
+            user: !secret pushover_userkey
+            sound: none
+            title: !lambda |-
+              return str_sprintf("%.2f kg", weight);
+            message: !lambda |-
+              return str_sprintf("Weight: %.2f kg\nBattery: %d%%\nTemperature: %.1f °C", weight,
+                                 (int) lroundf(id(wbb_battery).state),
+                                 id(wbb_temperature).state);
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200) {
+                    ESP_LOGI("pushover", "Notification sent successfully");
+                  } else {
+                    ESP_LOGW("pushover", "Notification failed (HTTP %d): %s", response->status_code, body.c_str());
+                  }
+          on_error:
+            then:
+              - logger.log: "Pushover request failed"
+
+button:
+  - platform: template
+    name: "Start sync"
+    icon: "mdi:bluetooth-connect"
+    web_server:
+      sorting_group_id: config
+      sorting_weight: 10
+    on_press:
+      then:
+        - lambda: 'id(wbb)->sync(true);'
+  - platform: template
+    name: "Remove board"
+    icon: "mdi:bluetooth-off"
+    web_server:
+      sorting_group_id: config
+      sorting_weight: 30
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_link_key();'
+  - platform: template
+    name: "Remove all boards"
+    icon: "mdi:delete-sweep"
+    web_server:
+      sorting_group_id: config
+      sorting_weight: 40
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_all_link_keys();'
