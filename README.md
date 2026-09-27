@@ -65,7 +65,7 @@ connect. The board pages the ESP32, the ESP32 checks its NVS for a key for that 
 the connection is refused if there isn't one. The refusal is logged:
 
 ```
-[I] [wii_balance_board.component:058] Refused a connection from unpaired board 00224C56A440. Press Start sync to pair it.
+[I] [wii_balance_board.component:058] Refused unpaired board 00224C56A440. Press Start sync.
 ```
 
 This matters because answering a PIN request is what performs pairing. Without this check a
@@ -74,7 +74,8 @@ board whose key has been removed simply asks for a PIN and is paired again on th
 
 **Start sync** opens a 60 second window in which an unpaired board may connect and complete
 PIN entry, then runs an inquiry to find it. Press it whenever a board needs pairing again,
-including right after using one of the removal buttons.
+including right after using one of the removal buttons. Both removal buttons disconnect a
+connected board immediately rather than leaving the session up until it times out.
 
 Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wii_bb` namespace), so
 re-authentication on a later reconnect does not need the sync-button PIN flow.

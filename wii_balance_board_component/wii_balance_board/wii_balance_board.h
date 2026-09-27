@@ -52,6 +52,7 @@ class WiiBalanceBoard : public Component {
   void board_tared(uint16_t handle, bool ok);
   void board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature, float topRightLoad,
                     float bottomRightLoad, float topLeftLoad, float bottomLeftLoad);
+  void disconnect_active_board_();
   void schedule_disconnect_(uint16_t handle, uint32_t generation, uint32_t delay_ms);
   void set_ready_(bool ready);
 

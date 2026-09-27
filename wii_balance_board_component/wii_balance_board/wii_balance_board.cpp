@@ -37,6 +37,16 @@ void WiiBalanceBoard::set_ready_(bool ready) {
   }
 }
 
+// Forgetting a board while it is connected would otherwise leave the session up until
+// the weighing timeout expires.
+void WiiBalanceBoard::disconnect_active_board_() {
+  if (!active_board_ || active_handle_ == 0) {
+    return;
+  }
+  ESP_LOGI(TAG, "Disconnecting the board");
+  wii.disconnect(active_handle_);
+}
+
 void WiiBalanceBoard::remove_link_key() {
   if (!active_board_ || active_handle_ == 0) {
     ESP_LOGW(TAG, "No board is connected, so there is no link key to remove");
@@ -47,11 +57,13 @@ void WiiBalanceBoard::remove_link_key() {
   } else {
     ESP_LOGW(TAG, "The connected board had no stored link key to remove");
   }
+  disconnect_active_board_();
 }
 
 void WiiBalanceBoard::remove_all_link_keys() {
   ESP_LOGI(TAG, "Removed every stored link key (%d). Every board will have to pair again.",
            wii.remove_all_link_keys());
+  disconnect_active_board_();
 }
 
 void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
