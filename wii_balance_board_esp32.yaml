@@ -12,6 +12,9 @@ esp32:
       CONFIG_BLUEDROID_ENABLED: y
       CONFIG_CLASSIC_BT_ENABLED: y
       CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY: y
+      # Keep the BT radio out of low-power modem sleep so it isn't power-cycling and
+      # potentially missing the board's incoming page while Wi-Fi is active.
+      CONFIG_BTDM_CTRL_MODEM_SLEEP: n
 
 # Enable logging
 logger:
@@ -39,7 +42,9 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  power_save_mode: LIGHT
+  # NONE keeps the Wi-Fi radio always active instead of duty-cycling with modem sleep, which
+  # removes a source of coexistence jitter that can shrink Bluetooth's page-scan windows.
+  power_save_mode: NONE
 
 external_components:
   - source:

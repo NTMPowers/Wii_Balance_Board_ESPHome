@@ -3,6 +3,7 @@
 
 #include <esp32-hal-bt.h>
 #include <esp_bt.h>
+#include <esp_coexist.h>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -292,6 +293,23 @@ struct Bluetooth::Impl {
         ESP_LOGD(TAG, "Role switch enabled in default link policy");
       } else {
         ESP_LOGW(TAG, "write_default_link_policy failed status=0x%02X", data[3]);
+      }
+      // Make the page scan window equal to the interval (continuous scanning) so an incoming
+      // page from the board is as unlikely as possible to be missed while sharing the radio
+      // with Wi-Fi. Power draw is not a concern; this board is mains powered.
+      CHECK_RESULT(enqueue_cmd_write_page_scan_activity(txBuffer, 0x0800, 0x0800));
+    } else if (data[1] == 0x1C && data[2] == 0x0C) {  // write_page_scan_activity
+      if (data[3] == 0x00) {
+        ESP_LOGD(TAG, "Page scan window widened to continuous");
+      } else {
+        ESP_LOGW(TAG, "write_page_scan_activity failed status=0x%02X", data[3]);
+      }
+      CHECK_RESULT(enqueue_cmd_write_page_scan_type(txBuffer, 1));  // 1 = interlaced page scan
+    } else if (data[1] == 0x47 && data[2] == 0x0C) {  // write_page_scan_type
+      if (data[3] == 0x00) {
+        ESP_LOGD(TAG, "Interlaced page scan enabled");
+      } else {
+        ESP_LOGW(TAG, "write_page_scan_type failed status=0x%02X", data[3]);
       }
       CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     } else if (data[1] == 0x1A && data[2] == 0x0C) {  // write_scan_enable
@@ -948,6 +966,11 @@ Bluetooth::Bluetooth() : m_impl(std::make_unique<Bluetooth::Impl>(this)) {
     ESP_LOGE(TAG, "Failed to initialize Bluetooth");
     return;
   }
+
+  // The ESP32 has a single 2.4GHz radio shared between Wi-Fi and Bluetooth; bias the
+  // software coexistence arbiter towards Bluetooth so incoming board pages are less likely
+  // to be missed while Wi-Fi is transmitting.
+  esp_coex_preference_set(ESP_COEX_PREFER_BT);
 
   auto *impl = m_impl.get();
   gListener = [impl](uint8_t *data, size_t len) {

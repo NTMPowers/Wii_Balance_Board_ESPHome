@@ -18,6 +18,8 @@
 #define HCI_WRITE_LOCAL_NAME (0x0013 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_WRITE_CLASS_OF_DEVICE (0x0024 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_WRITE_SCAN_ENABLE (0x001A | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
+#define HCI_WRITE_PAGE_SCAN_ACTIVITY (0x001C | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
+#define HCI_WRITE_PAGE_SCAN_TYPE (0x0047 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_INQUIRY (0x0001 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_INQUIRY_CANCEL (0x0002 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_REMOTE_NAME_REQUEST (0x0019 | HCI_GRP_LINK_CONT_CMDS)
@@ -118,6 +120,40 @@ static bool enqueue_cmd_write_scan_enable(RingBuffer &buffer, uint8_t mode) {
     UINT8_TO_STREAM(buf, 1);
 
     UINT8_TO_STREAM(buf, mode);
+    return true;
+  }
+  return false;
+}
+
+// Widens the page scan window towards the full interval (near-continuous scanning) so the
+// controller's radio is listening for an incoming page as much as possible, reducing the chance
+// of missing a board's connection attempt while sharing the radio with Wi-Fi.
+static bool enqueue_cmd_write_page_scan_activity(RingBuffer &buffer, uint16_t interval, uint16_t window) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 4)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_WRITE_PAGE_SCAN_ACTIVITY);
+    UINT8_TO_STREAM(buf, 4);
+
+    UINT16_TO_STREAM(buf, interval);
+    UINT16_TO_STREAM(buf, window);
+    return true;
+  }
+  return false;
+}
+
+// Interlaced page scan (type=1) scans both the standard and the interlaced offset train on every
+// scan window, catching a paging device faster than standard scan (type=0) for the same duty cycle.
+static bool enqueue_cmd_write_page_scan_type(RingBuffer &buffer, uint8_t type) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 1)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_WRITE_PAGE_SCAN_TYPE);
+    UINT8_TO_STREAM(buf, 1);
+
+    UINT8_TO_STREAM(buf, type);
     return true;
   }
   return false;
