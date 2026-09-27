@@ -16,6 +16,14 @@ struct BalanceBoardDisconnected {
   uint16_t handle;
 };
 
+// The board's own zero point has been rewritten from an empty-board average, so the
+// reading is now trustworthy. Only publish a measurement once this arrives, otherwise
+// the user would be weighing against a stale/phantom zero.
+struct BalanceBoardTared {
+  uint16_t handle;
+  bool ok;
+};
+
 struct BalanceBoardData {
   uint16_t handle;
   uint16_t tr;
@@ -31,8 +39,8 @@ struct ScanStarted {};
 
 struct ScanStopped {};
 
-using WiiEvent =
-    std::variant<BalanceBoardConnected, BalanceBoardDisconnected, BalanceBoardData, ScanStarted, ScanStopped>;
+using WiiEvent = std::variant<BalanceBoardConnected, BalanceBoardDisconnected, BalanceBoardData, BalanceBoardTared,
+                              ScanStarted, ScanStopped>;
 
 class Wii {
   struct BalanceBoard;

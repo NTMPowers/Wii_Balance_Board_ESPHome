@@ -28,9 +28,6 @@ web_server:
     - id: readings
       name: Readings
       sorting_weight: 10
-    - id: calibration
-      name: Calibration
-      sorting_weight: 20
     - id: controls
       name: Controls
       sorting_weight: 30
@@ -79,26 +76,11 @@ wii_balance_board:
     web_server:
       sorting_group_id: readings
       sorting_weight: 50
-  calibration_status:
-    name: "Calibration status"
+  ready_to_step_on:
+    name: "Ready to step on"
     web_server:
-      sorting_group_id: calibration
-      sorting_weight: 10
-
-text:
-  - platform: template
-    name: "Calibration weight"
-    web_server:
-      sorting_group_id: calibration
-      sorting_weight: 20
-    mode: text
-    min_length: 1
-    max_length: 6
-    pattern: "(?:[2-9][0-9]|1[0-4][0-9]|150)(?:[.,][0-9]{1,2})?"
-    optimistic: true
-    set_action:
-      then:
-        - lambda: 'id(wbb)->set_calibration_reference_weight(x);'
+      sorting_group_id: readings
+      sorting_weight: 60
 
 button:
   - platform: template
@@ -109,11 +91,3 @@ button:
     on_press:
       then:
         - lambda: 'id(wbb)->sync(true);'
-  - platform: template
-    name: "Calibration"
-    web_server:
-      sorting_group_id: calibration
-      sorting_weight: 30
-    on_press:
-      then:
-        - lambda: 'id(wbb)->calibration_button();'

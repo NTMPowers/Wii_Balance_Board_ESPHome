@@ -4,19 +4,14 @@
 #include "esphome/core/application.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <nvs.h>
 #include "utils.h"
 
 namespace esphome {
 namespace wii_balance_board {
 
 static const char *TAG = "wii_balance_board.component";
-static constexpr char CALIBRATION_NVS_NAMESPACE[] = "wbb_cal";
-static constexpr uint32_t CALIBRATION_MAGIC = 0x57424331;
 static constexpr size_t SAMPLE_WINDOW_SIZE = 64;
 static constexpr size_t TRIMMED_SAMPLE_COUNT = 6;
 
@@ -36,6 +31,12 @@ uint8_t interpret_battery_level(uint8_t batteryLevel) {
 
 WiiBalanceBoard::WiiBalanceBoard() : wii(&bluetooth), std_dev_(0.4) {}
 
+void WiiBalanceBoard::set_ready_(bool ready) {
+  if (ready_to_step_on_ != nullptr) {
+    ready_to_step_on_->publish_state(ready);
+  }
+}
+
 void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   ESP_LOGI(TAG, "Connected board: %012llX", static_cast<unsigned long long>(bdaddr));
 
@@ -48,26 +49,16 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   // (handles get reused on quick reconnects), then queue sampling state.
   queue.cancel(handle);
 
-  // Queue sampling timeout
   Sample sample;
   active_handle_ = handle;
   active_bdaddr_ = bdaddr;
   active_board_ = true;
-  CalibrationProfile profile{};
-  if (load_calibration_(bdaddr, &profile)) {
-    active_calibration_ = profile;
-    sample.calibrated = true;
-    sample.zero_offset_kg = profile.zero_offset_kg;
-    sample.scale_factor = profile.scale_factor;
-    ESP_LOGD(TAG, "Loaded board calibration offset=%.3f kg scale=%.6f", sample.zero_offset_kg,
-         sample.scale_factor);
-    set_calibration_status_("Calibrated");
-  } else {
-    active_calibration_ = CalibrationProfile{CALIBRATION_MAGIC, 0.0f, 1.0f};
-    ESP_LOGD(TAG, "No saved calibration; using 10 kg minimum");
-    set_calibration_status_("Not calibrated");
-  }
+  // The board has to zero itself before any reading means anything, so hold off
+  // until the driver reports it is safe to step on.
+  board_zeroed_ = false;
+  set_ready_(false);
   sampleMap.emplace(handle, sample);
+  ESP_LOGI(TAG, "Connected. Zeroing the board, keep it clear and do not step on yet.");
 
   // Schedule timeout disconnect; guarded by session generation so a task from
   // a dead session cannot fire on a new connection reusing the same handle.
@@ -83,27 +74,25 @@ void WiiBalanceBoard::schedule_disconnect_(uint16_t handle, uint32_t generation,
       ESP_LOGD(TAG, "Ignoring stale scheduled disconnect");
       return;
     }
-    if (calibration_stage_ != CalibrationStage::IDLE && calibration_handle_ == handle) {
-      calibration_stage_ = CalibrationStage::IDLE;
-      reset_calibration_samples_();
-      ESP_LOGI(TAG, "Calibration timed out. Disconnecting board.");
-    } else {
-      auto sample = sampleMap.find(handle);
-      if (sample == sampleMap.end() || !sample->second.measurement_published) {
-        ESP_LOGI(TAG, "Timeout reached. Disconnecting board.");
-      }
+    auto sample = sampleMap.find(handle);
+    if (sample == sampleMap.end() || !sample->second.measurement_published) {
+      ESP_LOGI(TAG, "Timeout reached. Disconnecting board.");
     }
     wii.disconnect(handle);
   });
 }
 
-void WiiBalanceBoard::refresh_calibration_timeout_() {
-  if (!active_board_ || calibration_stage_ == CalibrationStage::IDLE) {
+void WiiBalanceBoard::board_tared(uint16_t handle, bool ok) {
+  if (!ok) {
+    ESP_LOGE(TAG, "The board could not be zeroed, so no weight will be reported this session.");
     return;
   }
-  if (!queue.reschedule(active_handle_, millis() + 60000)) {
-    schedule_disconnect_(active_handle_, active_generation_, 60000);
+  if (!active_board_ || handle != active_handle_) {
+    return;
   }
+  board_zeroed_ = true;
+  set_ready_(true);
+  ESP_LOGI(TAG, "Board zeroed. You can step on now.");
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {
@@ -113,10 +102,10 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
   queue.cancel(handle);
   if (active_board_ && active_handle_ == handle) {
     active_board_ = false;
-    if (calibration_stage_ != CalibrationStage::IDLE && calibration_handle_ == handle) {
-      calibration_stage_ = CalibrationStage::IDLE;
-      reset_calibration_samples_();
-    }
+    board_zeroed_ = false;
+  }
+  if (active_bdaddr_ == 0) {
+    set_ready_(false);
   }
   if (sampleMap.count(handle) > 0) {
     auto &sample = sampleMap[handle];
@@ -135,222 +124,7 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
     }
     sampleMap.erase(handle);
   }
-
-
-}
-
-bool WiiBalanceBoard::load_calibration_(uint64_t bdaddr, CalibrationProfile *profile) {
-  char key[16];
-  snprintf(key, sizeof(key), "c%012llX", static_cast<unsigned long long>(bdaddr & 0xFFFFFFFFFFFFull));
-  nvs_handle_t nvs_handle;
-  if (nvs_open(CALIBRATION_NVS_NAMESPACE, NVS_READONLY, &nvs_handle) != ESP_OK) {
-    return false;
-  }
-  size_t size = sizeof(*profile);
-  esp_err_t result = nvs_get_blob(nvs_handle, key, profile, &size);
-  nvs_close(nvs_handle);
-  return result == ESP_OK && size == sizeof(*profile) && profile->magic == CALIBRATION_MAGIC &&
-         std::isfinite(profile->zero_offset_kg) && profile->zero_offset_kg >= 0.0f &&
-         profile->zero_offset_kg <= 250.0f && std::isfinite(profile->scale_factor) &&
-         profile->scale_factor >= 0.1f && profile->scale_factor <= 10.0f;
-}
-
-bool WiiBalanceBoard::save_calibration_(uint64_t bdaddr, const CalibrationProfile &profile) {
-  char key[16];
-  snprintf(key, sizeof(key), "c%012llX", static_cast<unsigned long long>(bdaddr & 0xFFFFFFFFFFFFull));
-  nvs_handle_t nvs_handle;
-  esp_err_t result = nvs_open(CALIBRATION_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
-  if (result != ESP_OK) {
-    ESP_LOGE(TAG, "Unable to open calibration storage: %s", esp_err_to_name(result));
-    return false;
-  }
-  result = nvs_set_blob(nvs_handle, key, &profile, sizeof(profile));
-  if (result == ESP_OK) {
-    result = nvs_commit(nvs_handle);
-  }
-  nvs_close(nvs_handle);
-  if (result != ESP_OK) {
-    ESP_LOGE(TAG, "Unable to save calibration: %s", esp_err_to_name(result));
-    return false;
-  }
-  return true;
-}
-
-void WiiBalanceBoard::set_calibration_status_(const char *status) {
-  if (calibration_status_sensor_ != nullptr) {
-    calibration_status_sensor_->publish_state(status);
-  }
-}
-
-void WiiBalanceBoard::reset_calibration_samples_() {
-  calibration_sample_count_ = 0;
-  calibration_samples_filled_ = 0;
-}
-
-void WiiBalanceBoard::calibration_button() {
-  if (!active_board_) {
-    ESP_LOGW(TAG, "Connect the board with A before starting calibration");
-    return;
-  }
-  switch (calibration_stage_) {
-    case CalibrationStage::IDLE:
-      calibration_handle_ = active_handle_;
-      calibration_empty_weight_ = NAN;
-      calibration_stage_ = CalibrationStage::WAIT_FOR_EMPTY;
-      reset_calibration_samples_();
-      refresh_calibration_timeout_();
-      ESP_LOGI(TAG, "Calibration started. Remove everything from the board.");
-      ESP_LOGI(TAG, "Press Calibration when the board is empty.");
-      break;
-    case CalibrationStage::WAIT_FOR_EMPTY:
-      calibration_stage_ = CalibrationStage::CAPTURE_EMPTY;
-      reset_calibration_samples_();
-      refresh_calibration_timeout_();
-      ESP_LOGI(TAG, "Empty capture started. Keep the board clear and still.");
-      break;
-    case CalibrationStage::WAIT_FOR_LOAD:
-      if (!std::isfinite(calibration_reference_weight_) || calibration_reference_weight_ < 20.0f ||
-          calibration_reference_weight_ > 150.0f) {
-        ESP_LOGI(TAG, "Enter your weight first.");
-        ESP_LOGI(TAG, "Then press Calibration and stand on the board.");
-        ESP_LOGI(TAG, "Hold still until calibration is complete.");
-        refresh_calibration_timeout_();
-        break;
-      }
-      calibration_stage_ = CalibrationStage::CAPTURE_LOAD;
-      reset_calibration_samples_();
-      refresh_calibration_timeout_();
-      ESP_LOGI(TAG, "Weight to use: %.2f kg.", calibration_reference_weight_);
-      ESP_LOGI(TAG, "Stand on the board with that weight.");
-      ESP_LOGI(TAG, "Hold still until calibration is complete.");
-      break;
-    case CalibrationStage::CAPTURE_EMPTY:
-    case CalibrationStage::CAPTURE_LOAD:
-      refresh_calibration_timeout_();
-      ESP_LOGD(TAG, "Calibration capture is already in progress");
-      break;
-  }
-}
-
-void WiiBalanceBoard::set_calibration_reference_weight(const std::string &weight) {
-  std::string normalized = weight;
-  const size_t comma = normalized.find(',');
-  if (comma != std::string::npos) {
-    if (normalized.find(',', comma + 1) != std::string::npos || normalized.find('.') != std::string::npos) {
-      calibration_reference_weight_ = NAN;
-      if (calibration_stage_ != CalibrationStage::IDLE) {
-        ESP_LOGW(TAG, "Invalid calibration weight format");
-        refresh_calibration_timeout_();
-      }
-      return;
-    }
-    normalized[comma] = '.';
-  }
-  const char *start = normalized.c_str();
-  char *end = nullptr;
-  float weight_kg = std::strtof(start, &end);
-  while (*end != '\0' && std::isspace(static_cast<unsigned char>(*end))) {
-    ++end;
-  }
-  if (end == start || *end != '\0' || !std::isfinite(weight_kg) || weight_kg < 20.0f || weight_kg > 150.0f) {
-    calibration_reference_weight_ = NAN;
-    if (calibration_stage_ != CalibrationStage::IDLE) {
-      ESP_LOGW(TAG, "Invalid reference weight; enter a value from 20 to 150 kg");
-      refresh_calibration_timeout_();
-    }
-    return;
-  }
-  calibration_reference_weight_ = weight_kg;
-  if (calibration_stage_ != CalibrationStage::IDLE) {
-    ESP_LOGD(TAG, "Calibration reference weight set to %.2f kg", weight_kg);
-    refresh_calibration_timeout_();
-  }
-}
-
-void WiiBalanceBoard::process_calibration_sample_(float adjusted_weight) {
-  calibration_samples_[calibration_sample_count_] = adjusted_weight;
-  calibration_sample_count_ = (calibration_sample_count_ + 1) % SAMPLE_WINDOW_SIZE;
-  calibration_samples_filled_ = std::min(calibration_samples_filled_ + 1, SAMPLE_WINDOW_SIZE);
-  if (calibration_samples_filled_ < SAMPLE_WINDOW_SIZE || calibration_sample_count_ % 16 != 0) {
-    return;
-  }
-
-  auto sorted = calibration_samples_;
-  std::sort(sorted.begin(), sorted.end());
-  constexpr size_t retained = SAMPLE_WINDOW_SIZE - 2 * TRIMMED_SAMPLE_COUNT;
-  float mean = 0.0f;
-  for (size_t i = TRIMMED_SAMPLE_COUNT; i < SAMPLE_WINDOW_SIZE - TRIMMED_SAMPLE_COUNT; ++i) {
-    mean += sorted[i];
-  }
-  mean /= retained;
-  float variance = 0.0f;
-  for (size_t i = TRIMMED_SAMPLE_COUNT; i < SAMPLE_WINDOW_SIZE - TRIMMED_SAMPLE_COUNT; ++i) {
-    const float difference = sorted[i] - mean;
-    variance += difference * difference / (retained - 1);
-  }
-  const float deviation = std::sqrt(variance);
-  const float max_deviation = calibration_stage_ == CalibrationStage::CAPTURE_LOAD ? std::max(std_dev_, 1.0f)
-                                                                                    : std_dev_;
-  if (!std::isfinite(mean) || deviation >= max_deviation) {
-    ESP_LOGD(TAG, "Calibration window not stable yet: mean=%.3f kg deviation=%.3f kg", mean, deviation);
-    return;
-  }
-
-  if (calibration_stage_ == CalibrationStage::CAPTURE_EMPTY) {
-    if (mean < 0.0f || mean > 250.0f) {
-      reset_calibration_samples_();
-      return;
-    }
-    calibration_empty_weight_ = mean;
-    calibration_stage_ = CalibrationStage::WAIT_FOR_LOAD;
-    reset_calibration_samples_();
-    refresh_calibration_timeout_();
-    ESP_LOGD(TAG, "Empty capture value: %.2f kg", calibration_empty_weight_);
-    ESP_LOGI(TAG, "Empty-board calibration is complete.");
-    ESP_LOGI(TAG, "Enter your weight, then press Calibration.");
-    return;
-  }
-
-  if (calibration_stage_ != CalibrationStage::CAPTURE_LOAD) {
-    return;
-  }
-  const float span = mean - calibration_empty_weight_;
-  const float minimum_load_delta = std::max(0.5f, std::min(1.0f, calibration_reference_weight_ * 0.25f));
-  if (span < minimum_load_delta) {
-    ESP_LOGD(TAG, "Waiting for loaded capture: delta=%.3f kg required=%.3f kg", span, minimum_load_delta);
-    return;
-  }
-
-  CalibrationProfile profile{CALIBRATION_MAGIC, calibration_empty_weight_, calibration_reference_weight_ / span};
-  if (!std::isfinite(profile.scale_factor) || profile.scale_factor < 0.1f || profile.scale_factor > 10.0f ||
-      !save_calibration_(active_bdaddr_, profile)) {
-    calibration_stage_ = CalibrationStage::WAIT_FOR_LOAD;
-    reset_calibration_samples_();
-    return;
-  }
-
-  active_calibration_ = profile;
-  auto sampleIt = sampleMap.find(calibration_handle_);
-  if (sampleIt != sampleMap.end()) {
-    Sample &sample = sampleIt->second;
-    sample.calibrated = true;
-    sample.zero_offset_kg = profile.zero_offset_kg;
-    sample.scale_factor = profile.scale_factor;
-    sample.sample_count = 0;
-    sample.samples_filled = 0;
-    sample.measurement = NAN;
-    sample.measurement_published = false;
-    std::fill(std::begin(sample.samples), std::end(sample.samples), 0.0f);
-  }
-  calibration_stage_ = CalibrationStage::IDLE;
-  reset_calibration_samples_();
-  set_calibration_status_("Calibrated");
-  ESP_LOGI(TAG, "Calibration saved for %012llX.", static_cast<unsigned long long>(active_bdaddr_));
-  ESP_LOGD(TAG, "Calibration values: empty=%.3f kg known=%.2f kg scale=%.6f", profile.zero_offset_kg,
-           calibration_reference_weight_, profile.scale_factor);
-  if (!queue.reschedule(calibration_handle_, millis() + 15000)) {
-    schedule_disconnect_(calibration_handle_, active_generation_, 15000);
-  }
+  set_ready_(false);
 }
 
 void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature,
@@ -367,38 +141,37 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     return;
   }
 
+  // Nothing measured against a stale zero: the board has not finished averaging
+  // its own empty reading yet.
+  if (!board_zeroed_) {
+    return;
+  }
+
   sample.referenceTemperature = reference_temp;
   sample.battery = battery;
   sample.temperature = temperature;
 
+  // The board's own reading, straight from its 0/17/34 kg calibration points,
+  // temperature compensated against the reference temperature captured when the
+  // board was zeroed. No software tare or scale is applied on top: the zero is
+  // fixed in the board's own calibration, once per connection.
   float totalWeight = (topRightLoad + bottomRightLoad + topLeftLoad + bottomLeftLoad) / 1000;
-  float factoryWeight = (.999 * totalWeight * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
-
-  if (calibration_stage_ != CalibrationStage::IDLE && handle == calibration_handle_) {
-    process_calibration_sample_(factoryWeight);
-    return;
-  }
-
-  float adjusted = factoryWeight;
-  if (sample.calibrated) {
-    adjusted = std::max(0.0f, (factoryWeight - sample.zero_offset_kg) * sample.scale_factor);
-  }
+  float weight = (.999 * totalWeight * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
 
   // Ignore small samples (noise), in std dev calculation.
   constexpr float minimum_weight = 3.0f;
-  if (adjusted < minimum_weight) {
+  if (weight < minimum_weight) {
     const uint32_t now = millis();
     if (static_cast<uint32_t>(now - last_low_weight_log_ms_) >= 1000) {
       last_low_weight_log_ms_ = now;
-      ESP_LOGD(TAG, "Low load raw=%.3f kg tare=%.3f kg", factoryWeight, sample.zero_offset_kg);
-      ESP_LOGD(TAG, "Adjusted=%.3f kg scale=%.4f minimum=%.1f kg", adjusted, sample.scale_factor,
-               minimum_weight);
+      ESP_LOGD(TAG, "Low load raw=%.3f kg minimum=%.1f kg", static_cast<double>(weight),
+               static_cast<double>(minimum_weight));
     }
     return;
   }
 
   int size = 64;
-  sample.samples[sample.sample_count] = adjusted;
+  sample.samples[sample.sample_count] = weight;
   sample.sample_count = (sample.sample_count + 1) % size;
   sample.samples_filled = std::min(sample.samples_filled + 1, static_cast<size_t>(size));
 
@@ -450,11 +223,11 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 }
 
 void WiiBalanceBoard::setup() {
-  set_calibration_status_("N/A");
   if (led_pin_ >= 0) {
     pinMode(led_pin_, OUTPUT);
     digitalWrite(led_pin_, HIGH);
   }
+  set_ready_(false);
   bluetooth.onReady([](auto) { ESP_LOGI(TAG, "Bluetooth initialized"); });
 
   wii.onEvent([this](const detail::WiiEvent &event) {
@@ -480,6 +253,7 @@ void WiiBalanceBoard::setup() {
                       this->board_connected(board.handle, board.bdaddr);
                     },
                    [this](const detail::BalanceBoardDisconnected &board) { this->board_disconnected(board.handle); },
+                   [this](const detail::BalanceBoardTared &tared) { this->board_tared(tared.handle, tared.ok); },
                    [this](const detail::BalanceBoardData &data) {
                      this->board_sample(data.handle, interpret_battery_level(data.batteryLevel),
                                         data.referenceTemperature, data.temperature, data.tr, data.br, data.tl,
@@ -517,9 +291,7 @@ void WiiBalanceBoard::set_weight(sensor::Sensor *weight) { weight_ = weight; }
 void WiiBalanceBoard::set_stddev(float stddev) { this->std_dev_ = stddev; }
 void WiiBalanceBoard::set_led_pin(int led_pin) { this->led_pin_ = led_pin; }
 void WiiBalanceBoard::set_syncing(binary_sensor::BinarySensor *syncing) { this->syncing_ = syncing; }
-void WiiBalanceBoard::set_calibration_status_sensor(text_sensor::TextSensor *sensor) {
-  calibration_status_sensor_ = sensor;
-}
+void WiiBalanceBoard::set_ready_to_step_on(binary_sensor::BinarySensor *ready) { this->ready_to_step_on_ = ready; }
 
 }  // namespace wii_balance_board
 }  // namespace esphome
