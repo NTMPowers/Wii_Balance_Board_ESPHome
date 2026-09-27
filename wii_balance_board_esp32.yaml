@@ -42,9 +42,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  # NONE keeps the Wi-Fi radio always active instead of duty-cycling with modem sleep, which
-  # removes a source of coexistence jitter that can shrink Bluetooth's page-scan windows.
-  power_save_mode: NONE
+  power_save_mode: LIGHT
 
 external_components:
   - source:
