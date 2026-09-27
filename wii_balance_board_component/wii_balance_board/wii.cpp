@@ -12,13 +12,18 @@
 
 static const char *TAG = "wii";
 
-// After we disconnect the board, briefly reject any immediate re-page from it. The board
-// itself re-pages within a few seconds of a clean disconnect while a user is still standing
-// on it (observed on hardware); rejecting a paired device is safe since it is always still
-// trusted and can page again once the cooldown lapses. Any re-page attempt seen during the
-// cooldown restarts the window, matching the requested behavior of blocking reconnects for
-// 10s after each attempt, not just after the original disconnect.
-static constexpr uint64_t BOARD_RECONNECT_COOLDOWN_MS = 10000;
+// After we disconnect the board, briefly reject any immediate re-page from it. A user is
+// typically still standing on the board when we hang up after a reading, and the board re-pages
+// on its own, so this window exists only to damp that hot measure -> disconnect -> re-page loop
+// (which cycles in roughly 1.5s).
+//
+// It must stay well below the board's own retry cadence, and it must never be extended by a
+// rejected page. The board re-paged 8.2s after a clean disconnect in testing, so a 10s window
+// could not expire before the next attempt; because each reject used to push the deadline out
+// again, the board was refused forever (captured on hardware: first re-page rejected with 1795ms
+// left, then every retry pushed the window out by another full period). Rejecting a page costs
+// us nothing, so it must not buy the board more time.
+static constexpr uint64_t BOARD_RECONNECT_COOLDOWN_MS = 3000;
 
 namespace esphome::wii_balance_board::detail {
 
@@ -272,9 +277,10 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
     if (result.classOfDevice == 0x042500) {
       uint64_t now = millis();
       if (now < rejectBoardUntil_) {
-        ESP_LOGD(TAG, "Rejecting board reconnect during post-disconnect cooldown (%lu ms left)",
+        // Logged as a warning: a refused board page is the user-visible failure mode, and it is
+        // otherwise indistinguishable from silence.
+        ESP_LOGW(TAG, "Rejecting board reconnect during post-disconnect cooldown (%lu ms left)",
                  static_cast<unsigned long>(rejectBoardUntil_ - now));
-        rejectBoardUntil_ = now + BOARD_RECONNECT_COOLDOWN_MS;  // restart the cooldown window
         return false;
       }
       ESP_LOGD(TAG, "Accepting board connection from paired device");
@@ -298,10 +304,25 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                         bt->connect(result.inquiry);
                       }
                     },
-                    [this](const HCIRoleChanged &result) {
-                      ESP_LOGD(TAG, "Role changed status=0x%02X role=0x%02X for %s", result.status, result.newRole,
-                               formatHex((uint8_t *) &result.bdaddr, 6));
-                    },
+                     [this](const HCIRoleChanged &result) {
+                       // The settled link role decides everything that follows. We accept the
+                       // board's page with role=0x00 ("become master"), and the board only opens
+                       // L2CAP itself while it is the slave -- so if we lose that race we sit
+                       // waiting for channels that never arrive (see HCIEncryptionChange) until
+                       // the board drops the link. This is the only place that outcome is visible,
+                       // so report it explicitly rather than as a bare debug line.
+                       auto addr = formatHex((uint8_t *) &result.bdaddr, 6);
+                       if (result.status == 0x00 && result.newRole == 0x00) {
+                         ESP_LOGI(TAG, "Link role settled: host is MASTER for %s, board will open L2CAP", addr);
+                       } else if (result.status == 0x00) {
+                         ESP_LOGW(TAG, "Link role settled: host is SLAVE for %s, board will not open L2CAP", addr);
+                       } else {
+                         // 0x35 is LMP Error Transaction Collision, i.e. the accept-time role
+                         // switch was rejected or collided, so the role is unchanged.
+                         ESP_LOGW(TAG, "Role switch FAILED status=0x%02X for %s, host stays SLAVE, board will not open L2CAP",
+                                  result.status, addr);
+                       }
+                     },
                       [this](const HCIConnectionFailed &result) {
                         pendingReconnect.reset();
                         reconnecting = false;
