@@ -37,6 +37,23 @@ void WiiBalanceBoard::set_ready_(bool ready) {
   }
 }
 
+void WiiBalanceBoard::remove_link_key() {
+  if (!active_board_ || active_handle_ == 0) {
+    ESP_LOGW(TAG, "No board is connected, so there is no link key to remove");
+    return;
+  }
+  if (wii.remove_link_key(active_bdaddr_)) {
+    ESP_LOGI(TAG, "Removed the stored link key for the connected board; it will have to pair again");
+  } else {
+    ESP_LOGW(TAG, "The connected board had no stored link key to remove");
+  }
+}
+
+void WiiBalanceBoard::remove_all_link_keys() {
+  ESP_LOGI(TAG, "Removed %d stored link key(s); any paired board will have to pair again",
+           wii.remove_all_link_keys());
+}
+
 void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   ESP_LOGI(TAG, "Connected board: %012llX", static_cast<unsigned long long>(bdaddr));
 

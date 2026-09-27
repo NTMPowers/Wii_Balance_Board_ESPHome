@@ -139,6 +139,10 @@ class Bluetooth {
   void disconnect(uint16_t handle);
   void sendPinReply(uint64_t bdaddr, uint8_t *pinData, size_t len);
   void sendLinkKeyReply(uint64_t bdaddr, const uint8_t *key);
+  // Forget stored pairing so the board has to pair again. Returns false when there
+  // was no key for that address.
+  bool removeLinkKey(uint64_t bdaddr);
+  int removeAllLinkKeys();
 
   // ACL
   void onACLEvent(const std::function<void(Bluetooth *, const ACLEvent &)> &acl);

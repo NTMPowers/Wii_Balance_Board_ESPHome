@@ -524,8 +524,15 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
     if (result.classOfDevice == 0x042500) {
       uint64_t now = millis();
       if (now < rejectBoardUntil_) {
-        ESP_LOGD(TAG, "Rejecting board reconnect during post-disconnect cooldown (%lu ms left)",
-                 static_cast<unsigned long>(rejectBoardUntil_ - now));
+        // A board still standing on it re-pages repeatedly, so only the first
+        // refusal in a window is worth an INFO line.
+        if (cooldownLogged_) {
+          ESP_LOGD(TAG, "Rejecting board reconnect during post-disconnect cooldown (%lu ms left)",
+                   static_cast<unsigned long>(rejectBoardUntil_ - now));
+        } else {
+          cooldownLogged_ = true;
+          ESP_LOGI(TAG, "Ignoring a board reconnect during the post-disconnect cooldown");
+        }
         rejectBoardUntil_ = now + BOARD_RECONNECT_COOLDOWN_MS;  // restart the cooldown window
         return false;
       }
@@ -738,9 +745,14 @@ void Wii::disconnect(uint16_t handle) {
   bluetooth->disconnect(handle);
 }
 
+bool Wii::remove_link_key(uint64_t bdaddr) { return bluetooth->removeLinkKey(bdaddr); }
+
+int Wii::remove_all_link_keys() { return bluetooth->removeAllLinkKeys(); }
+
 void Wii::handleBoardGone_(uint16_t handle) {
   if (connectedBoards.erase(handle) > 0) {
     rejectBoardUntil_ = millis() + BOARD_RECONNECT_COOLDOWN_MS;
+    cooldownLogged_ = false;
     this->eventListener(BalanceBoardDisconnected{.handle = handle});
   }
 }

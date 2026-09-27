@@ -55,6 +55,9 @@ class Wii {
   std::optional<uint64_t> pendingReconnect;
   bool reconnecting{false};
   uint64_t rejectBoardUntil_{0};
+  // Set on the first cooldown refusal, cleared when a new cooldown window opens,
+  // so a board that keeps re-paging only logs one INFO line per window.
+  bool cooldownLogged_{false};
   std::function<void(const WiiEvent &)> eventListener;
 
  public:
@@ -71,6 +74,10 @@ class Wii {
   // once the controller confirms the link is gone (HCIDisconnected). Rejecting an
   // immediate re-page is handled by rejectBoardUntil_.
   void disconnect(uint16_t handle);
+
+  // Forget the stored link keys so the affected boards have to pair again.
+  bool remove_link_key(uint64_t bdaddr);
+  int remove_all_link_keys();
 
  protected:
   void onACLChannelClosedUnexpectedly_(uint16_t handle, uint16_t psm);

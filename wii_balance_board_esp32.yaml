@@ -81,9 +81,30 @@ wii_balance_board:
 button:
   - platform: template
     name: "Start sync"
+    icon: "mdi:bluetooth-connect"
     web_server:
       sorting_group_id: sync
       sorting_weight: 10
     on_press:
       then:
         - lambda: 'id(wbb)->sync(true);'
+  - platform: template
+    name: "Remove board"
+    icon: "mdi:bluetooth-off"
+    entity_category: config
+    web_server:
+      sorting_group_id: sync
+      sorting_weight: 20
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_link_key();'
+  - platform: template
+    name: "Remove all"
+    icon: "mdi:delete-sweep"
+    entity_category: config
+    web_server:
+      sorting_group_id: sync
+      sorting_weight: 30
+    on_press:
+      then:
+        - lambda: 'id(wbb)->remove_all_link_keys();'

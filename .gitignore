@@ -4,3 +4,12 @@
 /.esphome/
 /secrets.yaml
 __pycache__/
+
+# Python virtualenv
+/.venv/
+
+# Serial captures
+/logs/
+
+# Editor tooling
+/.kilo/

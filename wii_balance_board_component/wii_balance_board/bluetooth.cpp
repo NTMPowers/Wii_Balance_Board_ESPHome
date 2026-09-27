@@ -181,6 +181,61 @@ struct Bluetooth::Impl {
     nvs_close(handle);
   }
 
+  bool removeLinkKey_(uint64_t bdaddr) {
+    char nvs_key[24];
+    snprintf(nvs_key, sizeof(nvs_key), "lk%012llX", static_cast<unsigned long long>(bdaddr));
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "NVS open failed: %s", esp_err_to_name(err));
+      return false;
+    }
+    err = nvs_erase_key(handle, nvs_key);
+    nvs_commit(handle);
+    nvs_close(handle);
+    if (err != ESP_OK) {
+      ESP_LOGD(TAG, "No stored link key %s to remove", nvs_key);
+      return false;
+    }
+    linkKeys_.erase(bdaddr);
+    return true;
+  }
+
+  // Keys are collected before erasing: nvs_entry_next is not safe to use while
+  // entries are being removed from the open handle.
+  int removeAllLinkKeys_() {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "NVS open failed: %s", esp_err_to_name(err));
+      return 0;
+    }
+    std::vector<std::string> keys;
+    nvs_iterator_t iter = nullptr;
+    if (nvs_entry_find_in_handle(handle, NVS_TYPE_ANY, &iter) == ESP_OK) {
+      do {
+        nvs_entry_info_t info;
+        if (nvs_entry_info(iter, &info) != ESP_OK) {
+          continue;
+        }
+        if (strncmp(info.key, "lk", 2) == 0) {
+          keys.emplace_back(info.key);
+        }
+      } while (nvs_entry_next(&iter) == ESP_OK);
+      nvs_release_iterator(iter);
+    }
+    int removed = 0;
+    for (const std::string &key : keys) {
+      if (nvs_erase_key(handle, key.c_str()) == ESP_OK) {
+        removed++;
+      }
+    }
+    nvs_commit(handle);
+    nvs_close(handle);
+    linkKeys_.clear();
+    return removed;
+  }
+
   void step() {
     while (esp_vhci_host_check_send_available()) {
       if (auto txData = txBuffer.read(0)) {
@@ -1036,6 +1091,10 @@ void Bluetooth::sendPinReply(uint64_t bdaddr, uint8_t *pinData, size_t len) {
 void Bluetooth::sendLinkKeyReply(uint64_t bdaddr, const uint8_t *key) {
   m_impl->sendLinkKeyReply_(bdaddr, key);
 }
+
+bool Bluetooth::removeLinkKey(uint64_t bdaddr) { return m_impl->removeLinkKey_(bdaddr); }
+
+int Bluetooth::removeAllLinkKeys() { return m_impl->removeAllLinkKeys_(); }
 
 void Bluetooth::onACLConnectionRequest(const std::function<bool(Bluetooth *, const ACLConnectionRequest &)> &listener) {
   m_impl->aclConnectionRequestListener = listener;

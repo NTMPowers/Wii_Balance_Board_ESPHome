@@ -32,6 +32,11 @@ class WiiBalanceBoard : public Component {
   void dump_config() override;
   void sync(bool enable);
 
+  // Forget stored pairing. remove_link_key() acts on the connected board and does
+  // nothing when none is connected.
+  void remove_link_key();
+  void remove_all_link_keys();
+
   void set_temperature_sensor(sensor::Sensor *temperature_sensor);
   void set_reference_temperature_sensor(sensor::Sensor *reference_temperature_sensor);
   void set_battery_level(sensor::Sensor *battery_level);
