@@ -58,6 +58,27 @@ there in either byte order, so there is no correct value to write back and it is
 factory set it. The rest of the factory block is logged at `DEBUG` on every connection so the
 original calibration can be restored by hand.
 
+### Pairing
+
+A stored link key is what marks a board as paired, and only a board with one is allowed to
+connect. The board pages the ESP32, the ESP32 checks its NVS for a key for that address, and
+the connection is refused if there isn't one. The refusal is logged:
+
+```
+[I] [wii_balance_board.component:058] Refused a connection from unpaired board 00224C56A440. Press Start sync to pair it.
+```
+
+This matters because answering a PIN request is what performs pairing. Without this check a
+board whose key has been removed simply asks for a PIN and is paired again on the spot, so
+`Remove board` and `Remove all boards` would appear to do nothing.
+
+**Start sync** opens a 60 second window in which an unpaired board may connect and complete
+PIN entry, then runs an inquiry to find it. Press it whenever a board needs pairing again,
+including right after using one of the removal buttons.
+
+Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wii_bb` namespace), so
+re-authentication on a later reconnect does not need the sync-button PIN flow.
+
 ### Reconnection
 
 The RVL-WBC-01 pages the previously paired host whenever it is stepped on. The Bluetooth
@@ -76,8 +97,6 @@ attempt has long finished, which cannot collide again.
 The board also re-pages within a few seconds of a clean disconnect while someone is still
 standing on it. Those pages are rejected for 10 seconds after each attempt, which stops the
 board from immediately re-connecting before it has been stepped off.
-
-Link keys are persisted in NVS (`lk<MAC-reversed>` keys in the `wbb` namespace), so re-authentication during reconnect does not require the sync-button PIN flow.
 
 ## Requirements
 

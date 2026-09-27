@@ -43,14 +43,14 @@ void WiiBalanceBoard::remove_link_key() {
     return;
   }
   if (wii.remove_link_key(active_bdaddr_)) {
-    ESP_LOGI(TAG, "Removed the stored link key for the connected board; it will have to pair again");
+    ESP_LOGI(TAG, "Removed the stored link key for the connected board. It will have to pair again.");
   } else {
     ESP_LOGW(TAG, "The connected board had no stored link key to remove");
   }
 }
 
 void WiiBalanceBoard::remove_all_link_keys() {
-  ESP_LOGI(TAG, "Removed %d stored link key(s); any paired board will have to pair again",
+  ESP_LOGI(TAG, "Removed every stored link key (%d). Every board will have to pair again.",
            wii.remove_all_link_keys());
 }
 
@@ -72,7 +72,7 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   board_zeroed_ = false;
   set_ready_(false);
   sampleMap.emplace(handle, sample);
-  ESP_LOGI(TAG, "Zeroing board");
+  ESP_LOGI(TAG, "Zeroing the board");
 
   // Schedule timeout disconnect; guarded by session generation so a task from
   // a dead session cannot fire on a new connection reusing the same handle.
@@ -227,7 +227,7 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
       // We have a valid sample, schedule board disconnect.
       ESP_LOGI(TAG, "Weight measured: %.2f kg", mean);
       if (!queue.reschedule(handle, millis() + 100)) {
-        ESP_LOGW(TAG, "Disconnect timer missing after measurement; scheduling fallback");
+        ESP_LOGW(TAG, "Disconnect timer missing after measurement, scheduling fallback");
         schedule_disconnect_(handle, active_generation_, 100);
       }
     }

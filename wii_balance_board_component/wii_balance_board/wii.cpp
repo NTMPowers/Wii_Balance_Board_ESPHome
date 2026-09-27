@@ -16,6 +16,10 @@ static const char *TAG = "wii";
 // Reject a re-page from the board for this long after we disconnect, restarted by any
 // further attempt inside the window.
 static constexpr uint64_t BOARD_RECONNECT_COOLDOWN_MS = 10000;
+// How long sync() leaves an unpaired board able to connect and pair.
+static constexpr uint64_t PAIRING_WINDOW_MS = 60000;
+// Throttle for the refusal logged when an unpaired board keeps paging.
+static constexpr uint64_t UNPAIRED_REFUSAL_LOG_INTERVAL_MS = 30000;
 
 namespace esphome::wii_balance_board::detail {
 
@@ -536,6 +540,20 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
         rejectBoardUntil_ = now + BOARD_RECONNECT_COOLDOWN_MS;  // restart the cooldown window
         return false;
       }
+      // A stored link key is what marks a board as paired. Without one it would
+      // fall through to PIN entry and re-pair itself silently, so only let it in
+      // while the user has asked to pair.
+      if (!pairingAllowed_() && !bluetooth->hasLinkKey(result.bdaddr)) {
+        if (now - lastUnpairedRefusalLogMs_ >= UNPAIRED_REFUSAL_LOG_INTERVAL_MS) {
+          lastUnpairedRefusalLogMs_ = now;
+          ESP_LOGI(TAG, "Refused a connection from unpaired board %012llX. Press Start sync to pair it.",
+                   static_cast<unsigned long long>(result.bdaddr));
+        } else {
+          ESP_LOGD(TAG, "Refused a connection from unpaired board %012llX",
+                   static_cast<unsigned long long>(result.bdaddr));
+        }
+        return false;
+      }
       ESP_LOGD(TAG, "Accepting board connection from paired device");
       return true;  // Accept incoming connections from balance board
     }
@@ -608,14 +626,21 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                       ESP_LOGD(TAG, "Negative link reply");
                       bt->negativeReply(result.bdaddr);
                     },
-                    [bt](const HCIPINRequest &result) {
+                    [this](const HCIPINRequest &result) {
+                      // Answering a PIN request is what pairs a board, so it is
+                      // only done for a board the user has asked to pair.
+                      if (!pairingAllowed_()) {
+                        ESP_LOGW(TAG, "Refused a PIN request from unpaired board %012llX",
+                                 static_cast<unsigned long long>(result.bdaddr));
+                        return;
+                      }
                       uint8_t pin_data[6];
-                      auto mac = bt->macAddress();
+                      auto mac = bluetooth->macAddress();
                       for (size_t i = 0; i < 6; ++i) {
                         pin_data[i] = mac[5 - i];
                       }
                       ESP_LOGD(TAG, "Sending pin reply");
-                      bt->sendPinReply(result.bdaddr, pin_data, 6);
+                      bluetooth->sendPinReply(result.bdaddr, pin_data, 6);
                     },
                            [this](const HCIDisconnected &result) {
                              ESP_LOGD(TAG, "Disconnected handle=%u reason=0x%02X", result.handle, result.reason);
@@ -717,7 +742,12 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
 
 Wii::~Wii() {}
 
-void Wii::sync(bool enable) { bluetooth->scan(enable); }
+void Wii::sync(bool enable) {
+  if (enable) {
+    pairingAllowedUntil_ = millis() + PAIRING_WINDOW_MS;
+  }
+  bluetooth->scan(enable);
+}
 
 void Wii::step() {
   if (pendingReconnect.has_value() && !reconnecting) {

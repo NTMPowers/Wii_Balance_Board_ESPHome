@@ -1,5 +1,6 @@
 #pragma once
 #include "bluetooth.h"
+#include "esphome/core/hal.h"
 #include <optional>
 #include <unordered_set>
 #include <unordered_map>
@@ -58,6 +59,10 @@ class Wii {
   // Set on the first cooldown refusal, cleared when a new cooldown window opens,
   // so a board that keeps re-paging only logs one INFO line per window.
   bool cooldownLogged_{false};
+  // A board may only connect while it has a stored link key. This window is opened
+  // by sync() to let an unpaired board in long enough to pair.
+  uint64_t pairingAllowedUntil_{0};
+  uint64_t lastUnpairedRefusalLogMs_{0};
   std::function<void(const WiiEvent &)> eventListener;
 
  public:
@@ -69,6 +74,9 @@ class Wii {
   void onEvent(std::function<void(const WiiEvent &)> eventListener);
   void sync(bool enable);
   void step();
+
+  // True while an unpaired board is allowed to connect and complete PIN entry.
+  bool pairingAllowed_() const { return static_cast<int64_t>(pairingAllowedUntil_ - millis()) > 0; }
 
   // Single unconditional HCI disconnect. The board is only treated as disconnected
   // once the controller confirms the link is gone (HCIDisconnected). Rejecting an

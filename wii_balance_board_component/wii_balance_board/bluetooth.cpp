@@ -181,6 +181,14 @@ struct Bluetooth::Impl {
     nvs_close(handle);
   }
 
+  bool hasLinkKey_(uint64_t bdaddr) {
+    if (linkKeys_.count(bdaddr) > 0) {
+      return true;
+    }
+    std::array<uint8_t, 16> key;
+    return loadLinkKey_(bdaddr, &key);
+  }
+
   bool removeLinkKey_(uint64_t bdaddr) {
     char nvs_key[24];
     snprintf(nvs_key, sizeof(nvs_key), "lk%012llX", static_cast<unsigned long long>(bdaddr));
@@ -467,7 +475,7 @@ struct Bluetooth::Impl {
       if (status == 0x0F) {
         ESP_LOGD(TAG, "Connection request rejected; re-enabling page scan");
       } else {
-        ESP_LOGW(TAG, "Connection complete failed status=0x%02X; re-enabling page scan", status);
+          ESP_LOGW(TAG, "Connection complete failed status=0x%02X, re-enabling page scan", status);
       }
       CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     }
@@ -1091,6 +1099,8 @@ void Bluetooth::sendPinReply(uint64_t bdaddr, uint8_t *pinData, size_t len) {
 void Bluetooth::sendLinkKeyReply(uint64_t bdaddr, const uint8_t *key) {
   m_impl->sendLinkKeyReply_(bdaddr, key);
 }
+
+bool Bluetooth::hasLinkKey(uint64_t bdaddr) { return m_impl->hasLinkKey_(bdaddr); }
 
 bool Bluetooth::removeLinkKey(uint64_t bdaddr) { return m_impl->removeLinkKey_(bdaddr); }
 

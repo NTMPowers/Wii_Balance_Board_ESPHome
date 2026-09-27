@@ -139,6 +139,9 @@ class Bluetooth {
   void disconnect(uint16_t handle);
   void sendPinReply(uint64_t bdaddr, uint8_t *pinData, size_t len);
   void sendLinkKeyReply(uint64_t bdaddr, const uint8_t *key);
+  // True when a link key is stored for this address, which is what marks a board
+  // as paired.
+  bool hasLinkKey(uint64_t bdaddr);
   // Forget stored pairing so the board has to pair again. Returns false when there
   // was no key for that address.
   bool removeLinkKey(uint64_t bdaddr);
