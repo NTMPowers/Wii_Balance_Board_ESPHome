@@ -16,11 +16,11 @@ struct Sample {
   float samples[64]{};
   size_t sample_count{0};
   size_t samples_filled{0};
-  uint8_t battery{0};
   uint8_t temperature{0};
   uint8_t referenceTemperature{0};
   float measurement{NAN};
   bool measurement_published{false};
+  bool telemetry_published{false};
 };
 
 class WiiBalanceBoard : public Component {

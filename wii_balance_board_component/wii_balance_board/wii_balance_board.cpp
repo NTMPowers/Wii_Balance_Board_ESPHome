@@ -133,23 +133,7 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
     active_board_ = false;
     board_zeroed_ = false;
   }
-  if (sampleMap.count(handle) > 0) {
-    auto &sample = sampleMap[handle];
-    if (!sample.measurement_published) {
-      if (sample.referenceTemperature > 0) {
-        if (reference_temperature_sensor_ != nullptr)
-          reference_temperature_sensor_->publish_state(sample.referenceTemperature);
-        if (temperature_sensor_ != nullptr)
-          temperature_sensor_->publish_state(sample.temperature);
-        if (battery_level_ != nullptr)
-          battery_level_->publish_state(sample.battery);
-      }
-      if (!isnan(sample.measurement) && weight_ != nullptr) {
-        weight_->publish_state(sample.measurement);
-      }
-    }
-    sampleMap.erase(handle);
-  }
+  sampleMap.erase(handle);
   set_ready_(false);
 }
 
@@ -173,8 +157,20 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   }
 
   sample.referenceTemperature = reference_temp;
-  sample.battery = battery;
   sample.temperature = temperature;
+
+  // The board reports its battery and temperatures continuously, so publish them the
+  // moment they are usable rather than making the user wait for a weight. They are sent
+  // once per connection because neither value changes appreciably during a weighing.
+  if (!sample.telemetry_published) {
+    sample.telemetry_published = true;
+    if (reference_temperature_sensor_ != nullptr)
+      reference_temperature_sensor_->publish_state(reference_temp);
+    if (temperature_sensor_ != nullptr)
+      temperature_sensor_->publish_state(temperature);
+    if (battery_level_ != nullptr)
+      battery_level_->publish_state(battery);
+  }
 
   // Sum the four cells, each already interpolated against the board's own 0/17/34 kg
   // points, then apply its temperature correction against the reference temperature
@@ -226,12 +222,6 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 
     if (mean >= minimum_weight && deviation < std_dev_) {
       sample.measurement = mean;
-      if (reference_temperature_sensor_ != nullptr)
-        reference_temperature_sensor_->publish_state(sample.referenceTemperature);
-      if (temperature_sensor_ != nullptr)
-        temperature_sensor_->publish_state(sample.temperature);
-      if (battery_level_ != nullptr)
-        battery_level_->publish_state(sample.battery);
       if (weight_ != nullptr)
         weight_->publish_state(sample.measurement);
       sample.measurement_published = true;

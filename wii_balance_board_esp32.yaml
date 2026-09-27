@@ -45,7 +45,7 @@ external_components:
 wii_balance_board:
   id: wbb
   standard_deviation: 0.3
-  led_pin: 2
+  led_pin: 22
   temperature_sensor:
     name: "Temperature"
     web_server:

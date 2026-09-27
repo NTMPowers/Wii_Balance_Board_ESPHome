@@ -139,6 +139,7 @@ wii_balance_board:
     name: "Ready to weigh"
   weight:
     name: "Weight"
+  led_pin: 22
 
 button:
   - platform: template
@@ -169,6 +170,7 @@ button:
 | `temperature_sensor` | `Temperature` | The board's current temperature. |
 | `reference_temperature_sensor` | `Reference temperature` | The temperature the board was zeroed at. |
 | `battery_level` | `Battery level` | Battery percentage. |
+| `led_pin` | none | GPIO with an LED that is lit while the board is ready to weigh. The LOLIN32 Lite's on-board LED is GPIO 22. |
 
 ## Using it
 
