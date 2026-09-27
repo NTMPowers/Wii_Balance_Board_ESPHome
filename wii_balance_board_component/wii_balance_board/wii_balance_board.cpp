@@ -58,7 +58,7 @@ void WiiBalanceBoard::board_connected(uint16_t handle, uint64_t bdaddr) {
   board_zeroed_ = false;
   set_ready_(false);
   sampleMap.emplace(handle, sample);
-  ESP_LOGI(TAG, "Connected. Zeroing the board, keep it clear and do not step on yet.");
+  ESP_LOGD(TAG, "Board connected, zeroing it before it can be weighed on");
 
   // Schedule timeout disconnect; guarded by session generation so a task from
   // a dead session cannot fire on a new connection reusing the same handle.
@@ -92,7 +92,6 @@ void WiiBalanceBoard::board_tared(uint16_t handle, bool ok) {
   }
   board_zeroed_ = true;
   set_ready_(true);
-  ESP_LOGI(TAG, "Board zeroed. You can step on now.");
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {

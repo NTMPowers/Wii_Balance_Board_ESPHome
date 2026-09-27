@@ -46,7 +46,7 @@ class Wii::BalanceBoard {
   // zero it boots with is never the zero from the last session. Re-zeroing per
   // connection is the only way to get a trustworthy zero.
   // ---------------------------------------------------------------------
-  enum class TareStage : uint8_t { IDLE, COLLECTING, WRITE_ZERO, WRITE_TEMP, WRITE_CRC, VERIFY_ZERO, VERIFY_CRC };
+  enum class TareStage : uint8_t { IDLE, COLLECTING, WRITE_ZERO, WRITE_TEMP, VERIFY_ZERO, VERIFY_TEMP };
 
   // Nintendo's manual samples the empty board for ~2 s.
   static constexpr uint32_t TARE_WINDOW_MS = 2000;
@@ -72,33 +72,8 @@ class Wii::BalanceBoard {
   uint8_t crcHeader[2]{};   // 0xA40020, 0xA40021
   uint8_t crcStored[4]{};   // 0xA4003C..0xA4003F
   uint8_t refTempByte61{0x01};
-  bool crcLowFirst{true};
   uint8_t pendingZero[8]{}; // new 0 kg points, big endian, ready to write
   std::function<void(uint16_t, bool)> onTared_;
-
-  // CRC-32 with the reversed polynomial, as WiiBrew documents for this block.
-  static uint32_t crc32_(const uint8_t *data, size_t len) {
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < len; ++i) {
-      crc ^= data[i];
-      for (uint8_t bit = 0; bit < 8; ++bit) {
-        crc = (crc & 1u) ? (crc >> 1) ^ 0xEDB88320u : (crc >> 1);
-      }
-    }
-    return ~crc;
-  }
-
-  // The 28 checksummed bytes: the 24 calibration bytes, then 0x20/0x21, then
-  // 0x60/0x61. pendingZero is overlaid on the 0 kg points because the CRC has
-  // to describe the image we are about to write, not the factory one.
-  void buildChecksumInput_(uint8_t *out) const {
-    std::memcpy(out, calRaw, 24);
-    std::memcpy(out, pendingZero, 8);
-    out[24] = crcHeader[0];
-    out[25] = crcHeader[1];
-    out[26] = referenceTemperature;
-    out[27] = refTempByte61;
-  }
 
   void restartTareWindow_() {
     tareWindowStartMs = millis();
@@ -147,7 +122,7 @@ class Wii::BalanceBoard {
     }
     for (uint8_t i = 0; i < 4; ++i) {
       if (static_cast<uint32_t>(tareMax[i] - tareMin[i]) > TARE_MAX_SPREAD) {
-        ESP_LOGW(TAG, "Board was disturbed while zeroing (sensor %u spread %u counts), retrying",
+        ESP_LOGD(TAG, "Board was disturbed while zeroing (sensor %u spread %u counts), averaging again",
                  static_cast<unsigned>(i), static_cast<unsigned>(tareMax[i] - tareMin[i]));
         return retryTare_();
       }
@@ -158,7 +133,7 @@ class Wii::BalanceBoard {
       total += interpolate(i, average) / 1000.0f;
     }
     if (total > TARE_MAX_LOAD_KG) {
-      ESP_LOGW(TAG, "Board reads %.2f kg before zeroing, step off and retry", static_cast<double>(total));
+      ESP_LOGD(TAG, "Board reads %.2f kg before zeroing, averaging again", static_cast<double>(total));
       return retryTare_();
     }
 
@@ -166,8 +141,8 @@ class Wii::BalanceBoard {
       pendingZero[i * 2] = static_cast<uint8_t>(average[i] >> 8);
       pendingZero[i * 2 + 1] = static_cast<uint8_t>(average[i] & 0xFF);
     }
-    ESP_LOGI(TAG,
-             "Empty board averaged over %lu samples: TR=%u BR=%u TL=%u BL=%u, temperature=%u (factory read %.2f kg)",
+    ESP_LOGD(TAG,
+             "Averaged %lu empty samples: TR=%u BR=%u TL=%u BL=%u, temperature=%u, factory read %.2f kg",
              static_cast<unsigned long>(tareSamples), static_cast<unsigned>(average[0]),
              static_cast<unsigned>(average[1]), static_cast<unsigned>(average[2]), static_cast<unsigned>(average[3]),
              static_cast<unsigned>(tareTemperature), static_cast<double>(total));
@@ -186,6 +161,20 @@ class Wii::BalanceBoard {
  public:
   BalanceBoard(Bluetooth *bt, uint16_t handle, std::function<void(uint16_t, bool)> onTared)
       : bt(bt), queryState(0), handle(handle), onTared_(std::move(onTared)) {}
+
+  // The averaging window is normally closed by the arrival of a report, but if the
+  // board never starts streaming there is nothing to arrive and we would sit here
+  // until the app's session timeout with no explanation. Checked from step() so
+  // that failure is reported as what it is.
+  void tick() {
+    if (tareStage != TareStage::COLLECTING) {
+      return;
+    }
+    const uint32_t elapsed = static_cast<uint32_t>(millis() - tareWindowStartMs);
+    if (elapsed > TARE_WINDOW_MS && tareSamples == 0) {
+      failTare_("board sent no weight reports to average");
+    }
+  }
 
   void setLeds(Bluetooth *bt, uint16_t handle, const std::bitset<4> &bits) {
     uint8_t ledData[] = {
@@ -392,8 +381,7 @@ class Wii::BalanceBoard {
         }
         crcHeader[0] = data[7];
         crcHeader[1] = data[8];
-        ESP_LOGD(TAG, "Checksum header bytes %02X %02X", crcHeader[0], crcHeader[1]);
-        read_memory(handle, 0x04, 0xA4003C, 4);  // read the stored checksum
+        read_memory(handle, 0x04, 0xA4003C, 4);  // read the stored block checksum
         queryState = 8;
         return;
       case 8: {
@@ -402,42 +390,43 @@ class Wii::BalanceBoard {
         }
         std::memcpy(crcStored, data + 7, 4);
 
-        // Use the factory block to work out the checksum's byte order instead of
-        // assuming one: recompute over what is currently in EEPROM and see which
-        // interpretation of the stored bytes matches.
-        uint8_t factory[28];
-        buildChecksumInput_(factory);  // pendingZero is all-zero here
-        const uint32_t computed = crc32_(factory, 28);
-        const uint32_t asLittle = crcStored[0] | (static_cast<uint32_t>(crcStored[1]) << 8) |
-                                  (static_cast<uint32_t>(crcStored[2]) << 16) |
-                                  (static_cast<uint32_t>(crcStored[3]) << 24);
-        const uint32_t asBig = (static_cast<uint32_t>(crcStored[0]) << 24) |
-                               (static_cast<uint32_t>(crcStored[1]) << 16) |
-                               (static_cast<uint32_t>(crcStored[2]) << 8) | crcStored[3];
-        crcLowFirst = asLittle == computed;
-        ESP_LOGI(TAG,
-                 "Factory 0kg TR=%u BR=%u TL=%u BL=%u ref=%u, checksum computed=%08X stored=%02X%02X%02X%02X "
-                 "(%s-endian match)",
+        // Log the whole factory block. It is the only record of the board's
+        // original calibration, so it is what a manual restore would need.
+        ESP_LOGD(TAG,
+                 "Factory block 0x20=%02X%02X 0kg=%02X%02X %02X%02X %02X%02X %02X%02X 17kg=%02X%02X %02X%02X %02X%02X "
+                 "%02X%02X 34kg=%02X%02X %02X%02X %02X%02X %02X%02X 0x60=%02X%02X 0x3C=%02X%02X%02X%02X",
+                 crcHeader[0], crcHeader[1], calRaw[0], calRaw[1], calRaw[2], calRaw[3], calRaw[4], calRaw[5],
+                 calRaw[6], calRaw[7], calRaw[8], calRaw[9], calRaw[10], calRaw[11], calRaw[12], calRaw[13],
+                 calRaw[14], calRaw[15], calRaw[16], calRaw[17], calRaw[18], calRaw[19], calRaw[20], calRaw[21],
+                 calRaw[22], calRaw[23], referenceTemperature, refTempByte61, crcStored[0], crcStored[1], crcStored[2],
+                 crcStored[3]);
+        ESP_LOGD(TAG, "Factory 0kg TR=%u BR=%u TL=%u BL=%u, reference temperature=%u",
                  static_cast<unsigned>(calibration[0]), static_cast<unsigned>(calibration[1]),
                  static_cast<unsigned>(calibration[2]), static_cast<unsigned>(calibration[3]),
-                 static_cast<unsigned>(referenceTemperature), static_cast<unsigned>(computed), crcStored[0],
-                 crcStored[1], crcStored[2], crcStored[3], crcLowFirst ? "little" : (asBig == computed ? "big" : "NO"));
-        if (asLittle != computed && asBig != computed) {
-          ESP_LOGW(TAG,
-                   "Stored checksum matches neither byte order; assuming little-endian as the Wiimote does. "
-                   "The block is logged above so the board can be restored by hand if it is rejected.");
-        }
+                 static_cast<unsigned>(referenceTemperature));
 
-        ESP_LOGI(TAG, "Zeroing the board: keep it clear and do not step on for a moment");
+        // WiiBrew documents a CRC32 (reversed polynomial 0xEDB88320) over the 24
+        // calibration bytes, then 0x20/0x21, then 0x60/0x61. Measured against this
+        // board's factory block, no such CRC32 reproduces the stored value in
+        // either byte order, nor does the CRC over any other range of bytes we can
+        // read. So the board is evidently not validating that word against the
+        // calibration points, and there is no way for us to regenerate it
+        // correctly. Leave it untouched rather than write a guess: the block stays
+        // exactly as the factory shipped it apart from the zero we are changing.
+        ESP_LOGD(TAG, "Leaving the block checksum %02X%02X%02X%02X at 0xA4003C as the factory set it",
+                 crcStored[0], crcStored[1], crcStored[2], crcStored[3]);
+
+        // Start the report stream. The board only streams weight reports once it
+        // has been told which mode to use, so this has to happen before the
+        // averaging window or nothing arrives to average.
+        set_reporting_mode(handle, 0x34, true);
         tareAttempt = 0;
         tareStage = TareStage::COLLECTING;
         restartTareWindow_();
-        queryState = 9;
         return;
       }
-      case 9:  // zero points written, now the temperature
-      case 10:  // temperature written, now the checksum
-      case 11:  // checksum written, now verify
+      case 9:  // 0 kg points written, now the reference temperature
+      case 10:  // temperature written, now verify
         if (data[1] != 0x22 || len < 6) {
           return;
         }
@@ -448,25 +437,12 @@ class Wii::BalanceBoard {
         if (queryState == 9) {
           write_memory(handle, 0x04, 0xA40060, {tareTemperature, refTempByte61});
           queryState = 10;
-        } else if (queryState == 10) {
-          uint8_t crcBytes[28];
-          buildChecksumInput_(crcBytes);
-          const uint32_t crc = crc32_(crcBytes, 28);
-          const uint8_t ordered[4] = {
-              static_cast<uint8_t>(crcLowFirst ? crc : (crc >> 24)),
-              static_cast<uint8_t>(crcLowFirst ? (crc >> 8) : (crc >> 16)),
-              static_cast<uint8_t>(crcLowFirst ? (crc >> 16) : (crc >> 8)),
-              static_cast<uint8_t>(crcLowFirst ? (crc >> 24) : crc),
-          };
-          ESP_LOGI(TAG, "New calibration checksum %02X%02X%02X%02X", ordered[0], ordered[1], ordered[2], ordered[3]);
-          write_memory(handle, 0x04, 0xA4003C, {ordered[0], ordered[1], ordered[2], ordered[3]});
-          queryState = 11;
         } else {
           read_memory(handle, 0x04, 0xA40024, 16);  // verify the 0 kg points landed
-          queryState = 12;
+          queryState = 11;
         }
         return;
-      case 12: {
+      case 11: {
         if (data[1] != 0x21 || len < 23) {
           return;
         }
@@ -480,24 +456,16 @@ class Wii::BalanceBoard {
         for (uint8_t i = 0; i < 4; ++i) {
           calibration[i] = data[7 + i * 2] * 256 + data[8 + i * 2];
         }
-        read_memory(handle, 0x04, 0xA4003C, 4);
-        queryState = 13;
+        read_memory(handle, 0x04, 0xA40060, 2);
+        queryState = 12;
         return;
       }
-      case 13: {
-        if (data[1] != 0x21 || len < 11) {
+      case 12: {
+        if (data[1] != 0x21 || len < 9) {
           return;
         }
-        uint8_t expected[4];
-        uint8_t crcBytes[28];
-        buildChecksumInput_(crcBytes);
-        const uint32_t crc = crc32_(crcBytes, 28);
-        expected[0] = static_cast<uint8_t>(crcLowFirst ? crc : (crc >> 24));
-        expected[1] = static_cast<uint8_t>(crcLowFirst ? (crc >> 8) : (crc >> 16));
-        expected[2] = static_cast<uint8_t>(crcLowFirst ? (crc >> 16) : (crc >> 8));
-        expected[3] = static_cast<uint8_t>(crcLowFirst ? (crc >> 24) : crc);
-        if (std::memcmp(data + 7, expected, 4) != 0) {
-          failTare_("the calibration checksum did not read back correctly");
+        if (data[7] != tareTemperature) {
+          failTare_("the reference temperature did not read back correctly");
           return;
         }
         // The board now reports weight against this temperature.
@@ -505,11 +473,10 @@ class Wii::BalanceBoard {
         tareStage = TareStage::IDLE;
         queryState = 0;
         set_reporting_mode(handle, 0x34, false);
-        ESP_LOGI(TAG, "Board zeroed: 0kg TR=%u BR=%u TL=%u BL=%u, reference temperature=%u",
+        ESP_LOGD(TAG, "Board zeroed: 0kg TR=%u BR=%u TL=%u BL=%u, reference temperature=%u",
                  static_cast<unsigned>(calibration[0]), static_cast<unsigned>(calibration[1]),
                  static_cast<unsigned>(calibration[2]), static_cast<unsigned>(calibration[3]),
                  static_cast<unsigned>(referenceTemperature));
-        ESP_LOGI(TAG, "Safe to step on the board now");
         if (onTared_) {
           onTared_(handle, true);
         }
@@ -550,8 +517,7 @@ class Wii::BalanceBoard {
             write_memory(handle, 0x04, 0xA40024, {pendingZero[0], pendingZero[1], pendingZero[2], pendingZero[3],
                                                    pendingZero[4], pendingZero[5], pendingZero[6], pendingZero[7]});
             queryState = 9;
-          }
-          return false;
+          }          return false;
         }
         if (tareStage != TareStage::IDLE) {
           return false;  // ignore reports while the new zero is written and checked
@@ -796,6 +762,9 @@ void Wii::step() {
     bluetooth->connect(bdaddr);
   }
   bluetooth->process();
+  for (auto &entry : connectedBoards) {
+    entry.second->tick();
+  }
 }
 
 void Wii::onEvent(std::function<void(const WiiEvent &)> eventListener) {
