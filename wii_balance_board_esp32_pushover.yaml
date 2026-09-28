@@ -106,6 +106,7 @@ wii_balance_board:
           json:
             token: !secret pushover_appkey
             user: !secret pushover_userkey
+            device: !secret pushover_device
             sound: none
             title: Wii Balance Board
             message: !lambda |-
